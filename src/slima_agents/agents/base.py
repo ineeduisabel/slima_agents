@@ -45,7 +45,7 @@ class BaseAgent(ABC):
         context: WorldContext,
         book_token: str = "",
         model: str | None = None,
-        timeout: int = 900,
+        timeout: int = 3600,
     ):
         self.context = context
         self.book_token = book_token

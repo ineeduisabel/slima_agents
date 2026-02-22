@@ -3,7 +3,7 @@
 ## 快速指令
 
 ```bash
-uv run pytest                                          # 執行測試（16 tests）
+uv run pytest                                          # 執行測試（28 tests）
 uv run slima-agents status                             # 檢查 API 連線
 uv run slima-agents worldbuild "需求描述"               # 建構世界觀
 uv run slima-agents worldbuild "需求描述" --model claude-opus-4-6  # 指定模型
@@ -20,7 +20,7 @@ src/slima_agents/
 │   ├── client.py             # SlimaClient：httpx async，base_url = https://api.slima.ai
 │   └── types.py              # Book, Commit, FileSnapshot, McpFile* Pydantic models
 ├── agents/
-│   ├── claude_runner.py      # ClaudeRunner.run()：claude -p subprocess，2 retries，CancelledError 處理
+│   ├── claude_runner.py      # ClaudeRunner.run()：claude -p --output-format stream-json，即時完成偵測，MAX_THINKING_TOKENS=0
 │   ├── base.py               # BaseAgent(ABC)：system_prompt + initial_message → ClaudeRunner → AgentResult
 │   ├── context.py            # WorldContext：12 個 section（含 book_structure），asyncio.Lock
 │   └── tools.py              # SLIMA_MCP_TOOLS / SLIMA_MCP_READ_TOOLS 字串列表
@@ -48,7 +48,8 @@ BaseAgent.run()
   → AgentResult(summary, full_output)
 ```
 
-每個 Agent 是一次 `claude -p` 呼叫。Claude CLI 自己處理 tool-use loop（不限回合數，受 timeout 限制）。
+每個 Agent 是一次 `claude -p` 呼叫。Claude CLI 自己處理 tool-use loop（最多 50 回合，受 `--max-turns` 限制）。
+ClaudeRunner 使用 `--output-format stream-json --verbose` 即時讀取事件流，收到 `{"type":"result"}` 立即返回，無需等待 timeout。
 
 ### WorldContext（共享狀態）
 
@@ -60,16 +61,18 @@ BaseAgent.run()
 
 ### 管線階段與 Timeout
 
+預設 timeout 為 3600s（1 小時安全網）。正常情況下 agent 透過 stream-json 完成偵測提前返回。
+
 | 階段 | Agent | 平行 | Timeout |
 |------|-------|------|---------|
-| 1 | ResearchAgent | 否 | 600s |
-| 2 | Cosmology + Geography + History | 是 | 600s |
-| 3 | Peoples + Cultures | 是 | 600s |
-| 4 | PowerStructures | 否 | 600s |
-| 5 | Characters + Items + Bestiary | 是 | **900s** |
-| 6 | Narrative | 否 | **900s** |
-| 7a | ValidationAgent-R1（一致性 + 內容完整度 + 修復） | 否 | 600s |
-| 7b | ValidationAgent-R2（確認修復 + 最終報告） | 否 | 600s |
+| 1 | ResearchAgent | 否 | 3600s |
+| 2 | Cosmology + Geography + History | 是 | 3600s |
+| 3 | Peoples + Cultures | 是 | 3600s |
+| 4 | PowerStructures | 否 | 3600s |
+| 5 | Characters + Items + Bestiary | 是 | 3600s |
+| 6 | Narrative | 否 | 3600s |
+| 7a | ValidationAgent-R1（一致性 + 內容完整度 + 修復） | 否 | 3600s |
+| 7b | ValidationAgent-R2（確認修復 + 最終報告） | 否 | 3600s |
 | 8 | 建立 README.md | 否 | — |
 
 階段 2-5 完成後會呼叫 `_inject_book_structure()` 注入檔案樹。
@@ -130,6 +133,21 @@ VERIFICATION_INSTRUCTIONS # 確認 Agent 指令（R2：確認修復 + 最終報�
 - `system_prompt()` = instructions + book_token + WorldContext 序列化
 - 參考資料要求在 `QUALITY_STANDARD` 裡 — 要求每個檔案底部有 `## 參考資料`
 
+### ClaudeRunner 實作細節
+
+```
+claude -p <prompt> --verbose --output-format stream-json \
+  --system-prompt <system> --max-turns 50 \
+  [--allowedTools tool1,tool2] [--model claude-opus-4-6]
+```
+
+- **stream-json**：即時讀取 NDJSON 事件流（`assistant`、`result` 等），收到 `{"type":"result"}` 立即返回
+- **MAX_THINKING_TOKENS=0**：環境變數，停用 extended thinking（避免輸出 token 被 thinking 耗盡導致空結果）
+- **CLAUDECODE env var 移除**：允許在 Claude Code session 內啟動子 `claude` process
+- **--max-turns 50**：限制 agentic 回合數（安全網）
+- **重試**：最多 2 次，write agent（有 MCP create/write 工具的）不重試 timeout（避免檔案重複）
+- **Timeout fallback**：write agent timeout 時視為部分成功（檔案已透過 MCP 儲存），回傳 `AgentResult(timed_out=True)`
+
 ## 關鍵限制
 
 - **claude -p 不能在 Claude Code session 裡執行**：subprocess 會 hang。測試必須在獨立終端機
@@ -140,7 +158,7 @@ VERIFICATION_INSTRUCTIONS # 確認 Agent 指令（R2：確認修復 + 最終報�
 ## 測試
 
 ```bash
-uv run pytest -v    # 全部 16 tests
+uv run pytest -v    # 全部 28 tests
 uv run pytest tests/test_base_agent.py -v        # Agent 單元測試（含 ResearchAgent 標題解析）
 uv run pytest tests/test_orchestrator.py -v      # Orchestrator 整合測試
 uv run pytest tests/test_slima_client.py -v      # API client 測試
@@ -152,6 +170,7 @@ uv run pytest tests/test_slima_client.py -v      # API client 測試
 
 - Python 3.11+
 - 依賴：httpx, pydantic, click, rich, python-dotenv（不需要 anthropic SDK）
+- 預設模型：`claude-opus-4-6`（可用 `--model` 或 `SLIMA_AGENTS_MODEL` env var 覆蓋）
 - Slima API base URL：`https://api.slima.ai`
-- Claude CLI 必須已安裝且登入
+- Claude CLI 必須已安裝且登入（需支援 `--output-format stream-json`）
 - Slima 認證：`~/.slima/credentials.json`（slima-mcp auth）或 `SLIMA_API_TOKEN` env var

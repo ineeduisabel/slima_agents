@@ -139,10 +139,7 @@ async def test_orchestrator_splits_items_and_bestiary(mock_slima):
         # Items and Bestiary are now separate agents, both should be constructed
         MockItems.assert_called_once()
         MockBestiary.assert_called_once()
-        # Heavy agents should have timeout=1200
-        assert MockItems.call_args.kwargs.get("timeout") == 1200
-        assert MockBestiary.call_args.kwargs.get("timeout") == 1200
-        assert MockChars.call_args.kwargs.get("timeout") == 1200
+        MockChars.assert_called_once()
 
 
 @pytest.mark.asyncio

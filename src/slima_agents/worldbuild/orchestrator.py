@@ -235,17 +235,17 @@ class OrchestratorAgent:
         await self._run_phase(
             "階段 5：細節",
             [
-                ("角色", CharactersAgent(**agent_kwargs, timeout=1200)),
-                ("物品", ItemsAgent(**agent_kwargs, timeout=1200)),
-                ("怪獸圖鑑", BestiaryAgent(**agent_kwargs, timeout=1200)),
+                ("角色", CharactersAgent(**agent_kwargs)),
+                ("物品", ItemsAgent(**agent_kwargs)),
+                ("怪獸圖鑑", BestiaryAgent(**agent_kwargs)),
             ],
         )
         await self._inject_book_structure(book_token)
 
-        # 步驟 8：階段 6 — 敘事（加長 timeout）
+        # 步驟 8：階段 6 — 敘事
         await self._run_phase(
             "階段 6：敘事",
-            [("敘事", NarrativeAgent(**agent_kwargs, timeout=1200))],
+            [("敘事", NarrativeAgent(**agent_kwargs))],
         )
 
         # 步驟 9：建立詞彙表
