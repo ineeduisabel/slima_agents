@@ -108,20 +108,27 @@ _LANG_PATHS = {
 }
 
 
-def _format_structure_tree(nodes: list[dict], indent: int = 0) -> str:
-    """Format a list of FileSnapshot dicts into a readable tree string."""
+def _format_structure_tree(nodes: list[dict], prefix: str = "") -> str:
+    """Format a list of FileSnapshot dicts into a tree diagram (like `tree` command)."""
     lines: list[str] = []
-    for node in sorted(nodes, key=lambda n: n.get("position", 0)):
-        prefix = "  " * indent
+    # Sort: folders first, then files; within each group sort by position
+    sorted_nodes = sorted(
+        nodes,
+        key=lambda n: (n.get("kind") != "folder", n.get("position", 0)),
+    )
+    for i, node in enumerate(sorted_nodes):
+        is_last = i == len(sorted_nodes) - 1
+        connector = "└── " if is_last else "├── "
         name = node.get("name", "?")
         kind = node.get("kind", "file")
         if kind == "folder":
-            lines.append(f"{prefix}{name}/")
+            lines.append(f"{prefix}{connector}{name}/")
             children = node.get("children") or []
             if children:
-                lines.append(_format_structure_tree(children, indent + 1))
+                extension = "    " if is_last else "│   "
+                lines.append(_format_structure_tree(children, prefix + extension))
         else:
-            lines.append(f"{prefix}{name}")
+            lines.append(f"{prefix}{connector}{name}")
     return "\n".join(lines)
 
 

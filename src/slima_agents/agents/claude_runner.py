@@ -91,6 +91,7 @@ class ClaudeRunner:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
+                    limit=10 * 1024 * 1024,  # 10 MB — stream-json lines can be very large
                 )
 
                 result_text, num_turns, timed_out = await _read_stream(
