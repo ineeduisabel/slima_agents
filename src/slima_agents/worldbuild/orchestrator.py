@@ -29,34 +29,82 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def _detect_cjk(text: str) -> bool:
-    """Return True if text contains CJK characters (Chinese/Japanese/Korean)."""
-    return any("\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" for ch in text)
+def _detect_language(text: str) -> str:
+    """Detect prompt language. Returns 'ja', 'ko', 'zh', or 'en'.
+
+    Priority: Japanese kana → Korean Hangul → CJK ideographs (Chinese) → English.
+    """
+    for ch in text:
+        # Japanese: Hiragana (3040-309F) or Katakana (30A0-30FF)
+        if "\u3040" <= ch <= "\u309f" or "\u30a0" <= ch <= "\u30ff":
+            return "ja"
+        # Korean: Hangul Syllables (AC00-D7AF) or Hangul Jamo (1100-11FF)
+        if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff":
+            return "ko"
+    # CJK Unified Ideographs (shared by zh/ja/ko, but if no kana/hangul → zh)
+    if any("\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" for ch in text):
+        return "zh"
+    return "en"
 
 
 # Localized path/label mappings
 _PATHS_ZH = {
-    "overview_folder": "總覽",
-    "overview_file": "總覽/世界觀總覽.md",
+    "worldview_prefix": "世界觀",
+    "overview_folder": "世界觀/總覽",
+    "overview_file": "世界觀/總覽/世界觀總覽.md",
     "overview_title": "# 世界觀總覽",
     "overview_commit": "新增世界觀總覽",
-    "glossary_folder": "參考資料",
-    "glossary_file": "參考資料/詞彙表.md",
+    "glossary_folder": "世界觀/參考資料",
+    "glossary_file": "世界觀/參考資料/詞彙表.md",
     "glossary_title": "# 詞彙表",
     "glossary_intro": "本詞彙表包含世界觀聖經中的重要術語、名稱與概念。",
     "glossary_commit": "新增詞彙表",
 }
 
+_PATHS_JA = {
+    "worldview_prefix": "世界観",
+    "overview_folder": "世界観/概要",
+    "overview_file": "世界観/概要/世界観概要.md",
+    "overview_title": "# 世界観概要",
+    "overview_commit": "世界観概要を追加",
+    "glossary_folder": "世界観/参考資料",
+    "glossary_file": "世界観/参考資料/用語集.md",
+    "glossary_title": "# 用語集",
+    "glossary_intro": "この用語集には、世界観バイブルの重要な用語、名前、概念が含まれています。",
+    "glossary_commit": "用語集を追加",
+}
+
+_PATHS_KO = {
+    "worldview_prefix": "세계관",
+    "overview_folder": "세계관/개요",
+    "overview_file": "세계관/개요/세계관개요.md",
+    "overview_title": "# 세계관 개요",
+    "overview_commit": "세계관 개요 추가",
+    "glossary_folder": "세계관/참고자료",
+    "glossary_file": "세계관/참고자료/용어집.md",
+    "glossary_title": "# 용어집",
+    "glossary_intro": "이 용어집은 세계관 바이블의 주요 용어, 이름, 개념을 포함합니다.",
+    "glossary_commit": "용어집 추가",
+}
+
 _PATHS_EN = {
-    "overview_folder": "meta",
-    "overview_file": "meta/overview.md",
+    "worldview_prefix": "worldview",
+    "overview_folder": "worldview/meta",
+    "overview_file": "worldview/meta/overview.md",
     "overview_title": "# World Bible Overview",
     "overview_commit": "Add world overview",
-    "glossary_folder": "reference",
-    "glossary_file": "reference/glossary.md",
+    "glossary_folder": "worldview/reference",
+    "glossary_file": "worldview/reference/glossary.md",
     "glossary_title": "# Glossary",
     "glossary_intro": "This glossary contains key terms, names, and concepts from the world bible.",
     "glossary_commit": "Add glossary",
+}
+
+_LANG_PATHS = {
+    "zh": _PATHS_ZH,
+    "ja": _PATHS_JA,
+    "ko": _PATHS_KO,
+    "en": _PATHS_EN,
 }
 
 
@@ -92,7 +140,8 @@ class OrchestratorAgent:
     async def run(self, prompt: str) -> str:
         """執行完整管線，回傳 book token。"""
         start = time.time()
-        L = _PATHS_ZH if _detect_cjk(prompt) else _PATHS_EN
+        lang = _detect_language(prompt)
+        L = _LANG_PATHS[lang]
 
         console.print(Panel(f"[bold]世界觀建構 Agent[/bold]\n{prompt}", border_style="blue"))
 
@@ -100,13 +149,18 @@ class OrchestratorAgent:
         self.context.user_prompt = prompt
 
         # 步驟 1：研究（不需要書籍，先產出世界觀內容和標題）
-        with _status("[階段 1] 研究 Agent 正在分析提示詞..."):
-            research = ResearchAgent(context=self.context, model=self.model, prompt=prompt)
+        research = ResearchAgent(context=self.context, model=self.model, prompt=prompt)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("[階段 1] 研究 Agent 正在分析提示詞...", total=None)
             result = await research.run()
-
-        if not result.full_output.strip():
-            console.print("  [red]研究 Agent 回傳空白內容！正在重試...[/red]")
-            result = await research.run()
+            if not result.full_output.strip():
+                progress.update(task_id, description="[階段 1] 研究 Agent [yellow]重試中[/yellow]...")
+                result = await research.run()
 
         if not result.full_output.strip():
             console.print(
@@ -122,12 +176,13 @@ class OrchestratorAgent:
 
         console.print(f"  [green]研究完成：[/green] {result.summary[:80]}")
 
-        # 步驟 2：用研究 Agent 產出的標題建立 Slima 書籍
+        # 步驟 2：用研究 Agent 產出的標題和描述建立 Slima 書籍
         book_title = research.suggested_title or prompt[:60]
+        book_description = research.suggested_description or prompt[:200]
         with _status("正在建立 Slima 書籍..."):
             book = await self.slima.create_book(
                 title=book_title,
-                description=prompt,
+                description=book_description,
             )
         book_token = book.token
         console.print(f"  書籍已建立：[cyan]{book_token}[/cyan]  標題：[yellow]{book_title}[/yellow]")
@@ -215,6 +270,26 @@ class OrchestratorAgent:
             [("驗證-R2", ValidationAgent(**agent_kwargs, validation_round=2))],
         )
 
+        # 步驟 12：建立 README.md
+        with _status("正在建立 README.md..."):
+            try:
+                structure = await self.slima.get_book_structure(book_token)
+                tree_str = _format_structure_tree(structure)
+            except Exception:
+                tree_str = "(unable to retrieve)"
+            readme_content = self._build_readme(
+                title=book_title,
+                description=book_description,
+                tree=tree_str,
+                L=L,
+            )
+            await self.slima.create_file(
+                book_token,
+                path="README.md",
+                content=readme_content,
+                commit_message="Add README",
+            )
+
         elapsed = time.time() - start
         console.print()
         console.print(
@@ -282,6 +357,65 @@ class OrchestratorAgent:
             logger.debug(f"Injected book structure ({len(tree_str)} chars)")
         except Exception as e:
             logger.warning(f"Failed to inject book structure: {e}")
+
+    def _build_readme(self, title: str, description: str, tree: str, L: dict) -> str:
+        """Build a README.md for the root of the book."""
+        prefix = L["worldview_prefix"]
+        if L is _PATHS_ZH:
+            return (
+                f"# {title}\n\n"
+                f"{description}\n\n"
+                f"## 結構\n\n"
+                f"```\n{tree}\n```\n\n"
+                f"## 使用方式\n\n"
+                f"本書是一本**世界觀聖經**（World Bible），包含完整的世界設定資料。\n\n"
+                f"- `{prefix}/` — 所有世界觀設定檔案\n"
+                f"- `{L['overview_file']}` — 世界觀總覽\n"
+                f"- `{L['glossary_file']}` — 詞彙表\n\n"
+                f"## 致謝\n\n"
+                f"本世界觀聖經由 [Slima](https://slima.ai) + Claude AI 協作生成。\n"
+            )
+        if L is _PATHS_JA:
+            return (
+                f"# {title}\n\n"
+                f"{description}\n\n"
+                f"## 構成\n\n"
+                f"```\n{tree}\n```\n\n"
+                f"## 使い方\n\n"
+                f"本書は**世界観バイブル**（World Bible）であり、包括的な世界設定資料を含んでいます。\n\n"
+                f"- `{prefix}/` — すべての世界観設定ファイル\n"
+                f"- `{L['overview_file']}` — 世界観概要\n"
+                f"- `{L['glossary_file']}` — 用語集\n\n"
+                f"## クレジット\n\n"
+                f"この世界観バイブルは [Slima](https://slima.ai) + Claude AI の協力により生成されました。\n"
+            )
+        if L is _PATHS_KO:
+            return (
+                f"# {title}\n\n"
+                f"{description}\n\n"
+                f"## 구조\n\n"
+                f"```\n{tree}\n```\n\n"
+                f"## 사용 방법\n\n"
+                f"이 책은 포괄적인 세계 설정 자료를 포함한 **세계관 바이블**(World Bible)입니다.\n\n"
+                f"- `{prefix}/` — 모든 세계관 설정 파일\n"
+                f"- `{L['overview_file']}` — 세계관 개요\n"
+                f"- `{L['glossary_file']}` — 용어집\n\n"
+                f"## 크레딧\n\n"
+                f"이 세계관 바이블은 [Slima](https://slima.ai) + Claude AI의 협력으로 생성되었습니다.\n"
+            )
+        return (
+            f"# {title}\n\n"
+            f"{description}\n\n"
+            f"## Structure\n\n"
+            f"```\n{tree}\n```\n\n"
+            f"## Usage\n\n"
+            f"This book is a **World Bible** containing comprehensive world-building reference material.\n\n"
+            f"- `{prefix}/` — All world-building files\n"
+            f"- `{L['overview_file']}` — World overview\n"
+            f"- `{L['glossary_file']}` — Glossary of terms\n\n"
+            f"## Credits\n\n"
+            f"This world bible was collaboratively generated by [Slima](https://slima.ai) + Claude AI.\n"
+        )
 
     def _build_glossary(self, L: dict) -> str:
         """從 context 建構詞彙表。"""

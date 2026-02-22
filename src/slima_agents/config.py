@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 
 DEFAULT_BASE_URL = "https://api.slima.ai"
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-opus-4-6"
 CREDENTIALS_PATH = Path.home() / ".slima" / "credentials.json"
 
 

@@ -9,7 +9,7 @@ import pytest
 from slima_agents.agents.base import AgentResult
 from slima_agents.slima.client import SlimaClient
 from slima_agents.slima.types import Book, Commit
-from slima_agents.worldbuild.orchestrator import OrchestratorAgent
+from slima_agents.worldbuild.orchestrator import OrchestratorAgent, _detect_language
 
 
 @pytest.fixture
@@ -102,8 +102,8 @@ async def test_orchestrator_injects_book_structure(mock_slima):
 
         await orch.run("Test World")
 
-        # get_book_structure should be called after phases 2, 3, 4, and 5
-        assert mock_slima.get_book_structure.call_count == 4
+        # get_book_structure should be called after phases 2, 3, 4, 5, and for README
+        assert mock_slima.get_book_structure.call_count == 5
         # Context should have book_structure populated
         structure = await orch.context.read("book_structure")
         assert "meta/" in structure
@@ -195,3 +195,29 @@ async def test_orchestrator_runs_two_validation_rounds(mock_slima):
         assert len(valid_instances) == 2
         for inst in valid_instances:
             inst.run.assert_called_once()
+
+
+class TestDetectLanguage:
+    """Tests for _detect_language()."""
+
+    def test_chinese(self):
+        assert _detect_language("建構一個台灣鬼怪世界") == "zh"
+
+    def test_japanese_hiragana(self):
+        assert _detect_language("ファンタジーの世界を作ってください") == "ja"
+
+    def test_japanese_katakana(self):
+        assert _detect_language("ファンタジー世界") == "ja"
+
+    def test_korean(self):
+        assert _detect_language("판타지 세계를 만들어주세요") == "ko"
+
+    def test_english(self):
+        assert _detect_language("Build a fantasy world") == "en"
+
+    def test_mixed_cjk_no_kana_hangul(self):
+        # CJK ideographs only (no kana/hangul) → zh
+        assert _detect_language("三國演義") == "zh"
+
+    def test_empty(self):
+        assert _detect_language("") == "en"

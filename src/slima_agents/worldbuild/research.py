@@ -19,6 +19,7 @@ class ResearchAgent(BaseAgent):
         super().__init__(*args, **kwargs)
         self.prompt = prompt
         self.suggested_title: str = ""
+        self.suggested_description: str = ""
 
     @property
     def name(self) -> str:
@@ -44,6 +45,10 @@ class ResearchAgent(BaseAgent):
             f"Think of it as the name of a world encyclopedia or atlas. "
             f"Examples: '艾澤拉斯編年史', '瓦羅蘭大陸誌', 'The Silmarillion', '台灣百鬼錄'. "
             f"Just output the title text, nothing else. Use the same language as the prompt.)\n\n"
+            f"## Description\n"
+            f"(Write a 1-2 sentence concise description of this world. "
+            f"This will be used as the book's description. Focus on the world's core identity, "
+            f"genre, and what makes it unique. Use the same language as the prompt.)\n\n"
             f"## Overview\n## Cosmology\n## Geography\n## History\n## Peoples\n"
             f"## Cultures\n## Power Structures\n## Characters\n## Items Bestiary\n"
             f"## Narrative\n## Naming Conventions\n\n"
@@ -79,12 +84,17 @@ class ResearchAgent(BaseAgent):
         current_section = None
         current_content: list[str] = []
         in_title = False
+        in_description = False
 
         for line in lines:
             lower = line.strip().lower()
 
             # Check for ## Title header
             if lower == "## title" or lower.startswith("## title:") or lower.startswith("## title "):
+                # Save description if we were collecting it
+                if in_description:
+                    self._extract_description(current_content)
+                    in_description = False
                 # Save previous section
                 if current_section:
                     await self.context.write(current_section, "\n".join(current_content).strip())
@@ -93,20 +103,33 @@ class ResearchAgent(BaseAgent):
                 in_title = True
                 continue
 
+            # Check for ## Description header
+            if lower == "## description" or lower.startswith("## description:") or lower.startswith("## description "):
+                # Save title if we were collecting it
+                if in_title:
+                    self._extract_title(current_content)
+                    in_title = False
+                # Save previous section
+                if current_section:
+                    await self.context.write(current_section, "\n".join(current_content).strip())
+                current_section = None
+                current_content = []
+                in_description = True
+                continue
+
             # Check for other section headers
             matched = False
             for header, section_name in section_map.items():
                 if lower == header or lower.startswith(header + ":") or lower.startswith(header + " "):
                     # Save title if we were collecting it
                     if in_title:
-                        self.suggested_title = "\n".join(current_content).strip()
-                        # Clean up: take just the first non-empty line as title
-                        for t_line in current_content:
-                            cleaned = t_line.strip().strip("#").strip("*").strip()
-                            if cleaned:
-                                self.suggested_title = cleaned
-                                break
+                        self._extract_title(current_content)
                         in_title = False
+
+                    # Save description if we were collecting it
+                    if in_description:
+                        self._extract_description(current_content)
+                        in_description = False
 
                     # Save previous section
                     if current_section:
@@ -117,9 +140,28 @@ class ResearchAgent(BaseAgent):
                     break
 
             if not matched:
-                if in_title or current_section is not None:
+                if in_title or in_description or current_section is not None:
                     current_content.append(line)
 
-        # Save last section
+        # Save trailing content
+        if in_title:
+            self._extract_title(current_content)
+        if in_description:
+            self._extract_description(current_content)
         if current_section:
             await self.context.write(current_section, "\n".join(current_content).strip())
+
+    def _extract_title(self, content_lines: list[str]) -> None:
+        """Extract the first non-empty line as suggested_title."""
+        self.suggested_title = "\n".join(content_lines).strip()
+        for t_line in content_lines:
+            cleaned = t_line.strip().strip("#").strip("*").strip()
+            if cleaned:
+                self.suggested_title = cleaned
+                break
+
+    def _extract_description(self, content_lines: list[str]) -> None:
+        """Extract the joined non-empty lines as suggested_description."""
+        desc = "\n".join(content_lines).strip()
+        if desc:
+            self.suggested_description = desc

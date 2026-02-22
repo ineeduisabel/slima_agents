@@ -38,7 +38,7 @@ def worldbuild(prompt: str, model: str | None):
     使用範例：
       slima-agents worldbuild "英雄聯盟世界觀"
       slima-agents worldbuild "1980年代的美國" --model claude-opus-4-6
-      slima-agents worldbuild "DnD 被遺忘的國度" -v
+      slima-agents -v worldbuild "DnD 被遺忘的國度"
     """
     try:
         config = Config.load(model_override=model)

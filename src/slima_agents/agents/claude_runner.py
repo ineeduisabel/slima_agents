@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 
@@ -49,11 +50,16 @@ class ClaudeRunner:
         Raises:
             ClaudeRunnerError: If the subprocess fails after retries.
         """
+        # Build command — embed system prompt into user prompt instead of
+        # using --system-prompt flag, which triggers extended thinking in
+        # newer Claude CLI versions and exhausts output tokens on thinking.
+        full_prompt = (
+            f"<instructions>\n{system_prompt}\n</instructions>\n\n{prompt}"
+        )
         cmd = [
             "claude",
-            "-p", prompt,
-            "--output-format", "text",
-            "--system-prompt", system_prompt,
+            "-p", full_prompt,
+            "--output-format", "json",
         ]
 
         if allowed_tools:
@@ -69,7 +75,11 @@ class ClaudeRunner:
 
         for attempt in range(1, MAX_RETRIES + 1):
             logger.debug(f"[ClaudeRunner] attempt {attempt}/{MAX_RETRIES}")
-            logger.debug(f"[ClaudeRunner] cmd: {' '.join(cmd[:6])}...")
+            logger.debug(
+                f"[ClaudeRunner] cmd: claude -p <{len(full_prompt)} chars> "
+                f"--output-format json (instructions: {len(system_prompt)} chars, "
+                f"prompt: {len(prompt)} chars)"
+            )
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -94,20 +104,27 @@ class ClaudeRunner:
                     last_error = ClaudeRunnerError(err_msg)
                     continue
 
-                output = stdout.decode().strip()
-                logger.debug(f"[ClaudeRunner] output length: {len(output)} chars")
+                raw = stdout.decode("utf-8").strip()
+                logger.debug(
+                    f"[ClaudeRunner] stdout: {len(stdout)} raw bytes → "
+                    f"{len(raw)} chars after decode+strip"
+                )
 
-                # Warn if output is empty (common issue — claude -p sometimes returns nothing)
+                output = _extract_text(raw)
+
                 if not output:
                     logger.warning(
                         f"[ClaudeRunner] attempt {attempt} returned empty output "
-                        f"(returncode={proc.returncode}, stderr={stderr_text[:200]})"
+                        f"(raw bytes={len(stdout)}, returncode={proc.returncode}, "
+                        f"stderr={stderr_text[:200]}, "
+                        f"raw_preview={raw[:300]})"
                     )
                     last_error = ClaudeRunnerError(
                         f"Empty output (returncode={proc.returncode})"
                     )
                     continue
 
+                logger.debug(f"[ClaudeRunner] extracted {len(output)} chars")
                 return output
 
             except asyncio.TimeoutError:
@@ -131,3 +148,32 @@ class ClaudeRunner:
                 raise
 
         raise last_error or ClaudeRunnerError("All retries exhausted")
+
+
+def _extract_text(raw: str) -> str:
+    """Extract text from claude CLI output.
+
+    Tries JSON parsing first (--output-format json), falls back to plain text.
+    JSON format: {"result": "text content", ...}
+    """
+    if not raw:
+        return ""
+
+    # Try JSON parse
+    try:
+        data = json.loads(raw)
+        result = data.get("result", "")
+        if result:
+            return result.strip()
+        # Log details for debugging when result is empty
+        logger.warning(
+            f"[ClaudeRunner] JSON 'result' is empty. "
+            f"is_error: {data.get('is_error')}, "
+            f"stop_reason: {data.get('stop_reason')}, "
+            f"num_turns: {data.get('num_turns')}, "
+            f"usage: {data.get('usage')}"
+        )
+        return ""
+    except (json.JSONDecodeError, AttributeError):
+        # Not JSON — treat as plain text (backward compat)
+        return raw.strip()

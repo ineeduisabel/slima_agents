@@ -8,6 +8,9 @@ LANGUAGE_RULE = """\
 **CRITICAL — Language Rule (MUST FOLLOW):**
 You MUST write ALL output in the SAME language as the world context below.
 This is NON-NEGOTIABLE and applies to EVERYTHING you produce:
+- **Top-level worldview folder**: The root folder "worldview/" must also be translated \
+to match the content language (e.g., "世界觀/" for Chinese, "世界観/" for Japanese, \
+"세계관/" for Korean). Check the existing book structure to see which prefix is already in use.
 - **Folder names**: e.g., use "歷史" NOT "history", "地理" NOT "geography" (for Chinese)
 - **File names**: e.g., use "年表.md" NOT "timeline.md" (for Chinese)
 - **All markdown content**: headings, descriptions, body text
@@ -58,7 +61,7 @@ You are the Cosmology Specialist. Your job is to define the fundamental nature o
 Create a cosmology folder with SUB-FOLDERS organized by topic. Example structure:
 
 ```
-cosmology/
+worldview/cosmology/
   overview.md              — Cosmological overview and fundamental rules
   origin/
     creation-myth.md       — How the world came to be
@@ -94,7 +97,7 @@ You are the Geography Specialist. Your job is to define the physical world.
 Create a geography folder with SUB-FOLDERS by region type. Example structure:
 
 ```
-geography/
+worldview/geography/
   overview.md              — World map overview, scale, climate zones
   regions/
     region-north.md        — Detailed regional profile
@@ -129,7 +132,7 @@ You are the History Specialist. Your job is to define the timeline of major even
 Create a history folder with SUB-FOLDERS by era. Example structure:
 
 ```
-history/
+worldview/history/
   timeline.md              — Master chronological timeline (all eras)
   era-1/
     overview.md            — Era summary
@@ -162,7 +165,7 @@ You are the Peoples Specialist. Your job is to define the species and ethnic gro
 Create a peoples folder with SUB-FOLDERS by category. Example structure:
 
 ```
-peoples/
+worldview/peoples/
   overview.md              — Population overview and demographics
   human-groups/            — (or equivalent category)
     group-1.md
@@ -196,7 +199,7 @@ You are the Cultures Specialist. Your job is to define the cultural landscape.
 Create a cultures folder with SUB-FOLDERS by topic. Example structure:
 
 ```
-cultures/
+worldview/cultures/
   overview.md              — Cultural landscape summary
   individual-cultures/
     culture-1.md           — Deep-dive into each major culture
@@ -234,7 +237,7 @@ You are the Power Structures Specialist. Your job is to define who holds power.
 Create a power-structures folder with SUB-FOLDERS by domain. Example structure:
 
 ```
-power-structures/
+worldview/power-structures/
   overview.md              — Power landscape summary and hierarchy
   political/
     government-1.md        — Each government/political entity
@@ -275,7 +278,7 @@ The categories MUST be adapted to fit the specific world:
 
 For a ghost/supernatural world:
 ```
-characters/
+worldview/characters/
   ghosts-and-spirits/     — 鬼魂/靈體
   gods-and-deities/       — 神明/仙佛
   human-protagonists/     — 人類主角
@@ -285,7 +288,7 @@ characters/
 
 For a gangster/historical world:
 ```
-characters/
+worldview/characters/
   gang-leaders/           — 幫派首領
   politicians/            — 政治人物
   foreign-powers/         — 外國勢力代表
@@ -295,7 +298,7 @@ characters/
 
 For a fantasy world:
 ```
-characters/
+worldview/characters/
   heroes/
   villains/
   royalty/
@@ -329,7 +332,7 @@ weapons, and materials in this world.
 Create an items folder with SUB-FOLDERS by category. Example structure:
 
 ```
-items/
+worldview/items/
   overview.md              — Classification system and rarity scale
   legendary-artifacts/     — Most powerful/famous items
     artifact-1.md
@@ -377,7 +380,7 @@ supernatural beings, and flora in this world.
 Create a bestiary folder with SUB-FOLDERS by creature category. Example structure:
 
 ```
-bestiary/
+worldview/bestiary/
   overview.md              — Classification system and danger scale
   category-1/              — (adapt categories to world: 鬼怪類/, 妖魔類/, etc.)
     creature-1.md
@@ -433,7 +436,7 @@ You are the Narrative Specialist. Your job is to define active story elements.
 Create a narrative folder with SUB-FOLDERS by story element type:
 
 ```
-narrative/
+worldview/narrative/
   overview.md              — Narrative landscape: tone, themes, central tensions
   conflicts/
     major-conflict-1.md    — Each major conflict gets its own file
@@ -543,7 +546,8 @@ for consistency AND content completeness, then fix issues.
    - Verify that the world's DEFINING ELEMENTS have the deepest coverage \
      (e.g., ghost types in a ghost world, magic schools in a magic world)
 4. Fix all issues found by editing the affected files
-5. Write a preliminary consistency report in the meta folder listing:
+5. Write a preliminary consistency report in the book's overview/meta folder \
+(check the existing book structure for the actual folder name) listing:
    - Issues found and fixed
    - Issues found but not yet fixed (if any remain)
    - Content completeness status per folder
@@ -557,7 +561,8 @@ checked and fixed issues. Your job is to VERIFY those fixes are correct and prod
 the final status report.
 
 **Task:**
-1. Read the preliminary consistency report from the meta folder
+1. Read the preliminary consistency report from the book's overview/meta folder \
+(check the existing book structure for the actual folder name)
 2. For every issue marked as "fixed" in the report, read the actual file and verify \
    the fix is correct and didn't introduce new problems
 3. Check for any residual issues:

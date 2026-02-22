@@ -7,7 +7,7 @@ uv run pytest                                          # 執行測試（16 tests
 uv run slima-agents status                             # 檢查 API 連線
 uv run slima-agents worldbuild "需求描述"               # 建構世界觀
 uv run slima-agents worldbuild "需求描述" --model claude-opus-4-6  # 指定模型
-uv run slima-agents worldbuild "需求描述" -v            # 除錯日誌
+uv run slima-agents -v worldbuild "需求描述"              # 除錯日誌
 ```
 
 ## 專案結構
@@ -26,7 +26,7 @@ src/slima_agents/
 │   └── tools.py              # SLIMA_MCP_TOOLS / SLIMA_MCP_READ_TOOLS 字串列表
 └── worldbuild/
     ├── orchestrator.py       # OrchestratorAgent.run()：7 階段管線 + 階段間結構注入
-    ├── research.py           # ResearchAgent：純文字輸出（無 MCP），解析 ## 區段 + ## Title
+    ├── research.py           # ResearchAgent：純文字輸出（無 MCP），解析 ## 區段 + ## Title + ## Description
     ├── validator.py          # ValidationAgent：讀取全部檔案，產出一致性報告
     ├── templates.py          # LANGUAGE_RULE + QUALITY_STANDARD + 12 個 *_INSTRUCTIONS
     └── specialists/          # 10 個專家 Agent（每個都是 BaseAgent 子類別）
@@ -70,20 +70,37 @@ BaseAgent.run()
 | 6 | Narrative | 否 | **900s** |
 | 7a | ValidationAgent-R1（一致性 + 內容完整度 + 修復） | 否 | 600s |
 | 7b | ValidationAgent-R2（確認修復 + 最終報告） | 否 | 600s |
+| 8 | 建立 README.md | 否 | — |
 
 階段 2-5 完成後會呼叫 `_inject_book_structure()` 注入檔案樹。
 
 ### 語言偵測
 
-- `orchestrator._detect_cjk(prompt)` → 決定用 `_PATHS_ZH` 或 `_PATHS_EN`（總覽/詞彙表路徑）
-- `templates.LANGUAGE_RULE` → 嵌入每個 specialist 的 system prompt，強制所有產出用提示詞語言
+- `orchestrator._detect_language(prompt)` → 回傳 `'ja'`、`'ko'`、`'zh'` 或 `'en'`
+  - 日文：偵測到平假名（U+3040-309F）或片假名（U+30A0-30FF）→ `'ja'`
+  - 韓文：偵測到 Hangul（U+AC00-D7AF / U+1100-11FF）→ `'ko'`
+  - 中文：有 CJK 漢字但無假名/韓文 → `'zh'`
+  - 其他 → `'en'`
+- `_LANG_PATHS[lang]` → 選擇對應的路徑字典（`_PATHS_ZH` / `_PATHS_JA` / `_PATHS_KO` / `_PATHS_EN`）
+- 每個路徑字典包含 `worldview_prefix` key（如 `世界觀`、`世界観`、`세계관`、`worldview`）
+- `templates.LANGUAGE_RULE` → 嵌入每個 specialist 的 system prompt，強制所有產出用提示詞語言（含 worldview 前綴翻譯規則）
 - ResearchAgent 的 `initial_message()` 明確要求用提示詞語言撰寫
 
-### 標題生成
+### 標題與描述生成
 
 - ResearchAgent 輸出 `## Title` 區段 → 解析到 `research.suggested_title`
-- OrchestratorAgent 用此標題建立 Slima 書籍
-- Fallback：若解析失敗，使用 `prompt[:60]`
+- ResearchAgent 輸出 `## Description` 區段 → 解析到 `research.suggested_description`
+- OrchestratorAgent 用標題和描述建立 Slima 書籍
+- Fallback：標題解析失敗用 `prompt[:60]`，描述解析失敗用 `prompt[:200]`
+
+### 資料夾結構
+
+- 所有世界觀設定檔案放在本地化的前綴資料夾下：
+  - 中文：`世界觀/`（如 `世界觀/宇宙觀/`、`世界觀/地理/`）
+  - 日文：`世界観/`（如 `世界観/宇宙論/`、`世界観/地理/`）
+  - 韓文：`세계관/`（如 `세계관/우주론/`、`세계관/지리/`）
+  - 英文：`worldview/`（如 `worldview/cosmology/`、`worldview/geography/`）
+- 管線最後會自動建立根目錄的 `README.md`，包含世界觀標題、描述、檔案樹、使用說明（支援中/日/韓/英四種語言）
 
 ### Prompt 模板結構（templates.py）
 
@@ -108,7 +125,7 @@ VERIFICATION_INSTRUCTIONS # 確認 Agent 指令（R2：確認修復 + 最終報�
 ## 修改 Prompt 模板的注意事項
 
 - `QUALITY_STANDARD` 會附加到所有 specialist — 改這裡影響全部
-- `LANGUAGE_RULE` 嵌入所有 agent — 改語言偵測邏輯要同時改 `orchestrator._detect_cjk()`
+- `LANGUAGE_RULE` 嵌入所有 agent — 改語言偵測邏輯要同時改 `orchestrator._detect_language()`
 - 每個 specialist 的 `initial_message()` 是實際發送給 `claude -p` 的 user prompt
 - `system_prompt()` = instructions + book_token + WorldContext 序列化
 - 參考資料要求在 `QUALITY_STANDARD` 裡 — 要求每個檔案底部有 `## 參考資料`

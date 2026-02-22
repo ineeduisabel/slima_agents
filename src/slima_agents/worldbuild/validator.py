@@ -45,12 +45,14 @@ class ValidationAgent(BaseAgent):
                 "Are there missing entries for important categories?\n"
                 "4. Fix any issues by editing the affected files. "
                 "Create new files for missing entries if needed.\n"
-                "5. Create a preliminary consistency report in the meta folder with your findings.\n\n"
+                "5. Create a preliminary consistency report in the book's overview/meta folder "
+                "(check the existing book structure for the actual folder name) with your findings.\n\n"
                 "Write the report in the same language as the existing book content."
             )
         return (
             f"Use the Slima MCP tools to work with book '{self.book_token}'.\n\n"
-            "1. Read the preliminary consistency report from the meta folder.\n"
+            "1. Read the preliminary consistency report from the book's overview/meta folder "
+            "(check the existing book structure for the actual folder name).\n"
             "2. For each issue marked as fixed, read the actual file to verify the fix.\n"
             "3. Check for any residual or newly introduced issues.\n"
             "4. Fix any remaining problems.\n"

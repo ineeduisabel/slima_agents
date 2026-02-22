@@ -112,12 +112,15 @@ async def test_agent_summary_truncated():
 
 @pytest.mark.asyncio
 async def test_research_agent_parses_title():
-    """ResearchAgent should extract suggested_title from ## Title section."""
+    """ResearchAgent should extract suggested_title and suggested_description."""
     context = WorldContext()
 
     mock_output = (
         "## Title\n"
         "台灣百鬼錄\n"
+        "\n"
+        "## Description\n"
+        "一本關於台灣鬼怪傳說的世界觀聖經，涵蓋民間信仰與超自然存在。\n"
         "\n"
         "## Overview\n"
         "This is the overview content.\n"
@@ -133,6 +136,7 @@ async def test_research_agent_parses_title():
         await agent.run()
 
         assert agent.suggested_title == "台灣百鬼錄"
+        assert "台灣鬼怪傳說" in agent.suggested_description
         overview = await context.read("overview")
         assert "overview content" in overview
 
@@ -154,8 +158,62 @@ async def test_research_agent_fallback_without_title():
         await agent.run()
 
         assert agent.suggested_title == ""
+        assert agent.suggested_description == ""
         overview = await context.read("overview")
         assert "without title" in overview
+
+
+@pytest.mark.asyncio
+async def test_research_agent_parses_description():
+    """ResearchAgent should extract suggested_description from ## Description section."""
+    context = WorldContext()
+
+    mock_output = (
+        "## Title\n"
+        "The Dark Chronicles\n"
+        "\n"
+        "## Description\n"
+        "A dark fantasy world where ancient gods wage war through mortal champions.\n"
+        "\n"
+        "## Overview\n"
+        "Overview content here.\n"
+    )
+
+    with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
+        MockRunner.run = AsyncMock(return_value=mock_output)
+
+        agent = ResearchAgent(context=context, prompt="dark fantasy world")
+        await agent.run()
+
+        assert agent.suggested_title == "The Dark Chronicles"
+        assert "ancient gods" in agent.suggested_description
+        assert "mortal champions" in agent.suggested_description
+
+
+@pytest.mark.asyncio
+async def test_research_agent_description_without_title():
+    """ResearchAgent should parse description even when title comes after it."""
+    context = WorldContext()
+
+    mock_output = (
+        "## Description\n"
+        "A world of shadows and light.\n"
+        "\n"
+        "## Title\n"
+        "Shadow Codex\n"
+        "\n"
+        "## Overview\n"
+        "Overview here.\n"
+    )
+
+    with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
+        MockRunner.run = AsyncMock(return_value=mock_output)
+
+        agent = ResearchAgent(context=context, prompt="shadow world")
+        await agent.run()
+
+        assert agent.suggested_description == "A world of shadows and light."
+        assert agent.suggested_title == "Shadow Codex"
 
 
 @pytest.mark.asyncio
