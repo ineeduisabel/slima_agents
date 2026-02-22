@@ -203,10 +203,16 @@ class OrchestratorAgent:
                 commit_message=L["glossary_commit"],
             )
 
-        # 步驟 10：驗證
+        # 步驟 10：驗證（第一輪 — 一致性 + 內容完整度檢查 + 修復）
         await self._run_phase(
-            "階段 7：驗證",
-            [("驗證", ValidationAgent(**agent_kwargs))],
+            "階段 7a：驗證",
+            [("驗證-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
+        )
+
+        # 步驟 11：驗證（第二輪 — 確認修復 + 最終報告）
+        await self._run_phase(
+            "階段 7b：確認",
+            [("驗證-R2", ValidationAgent(**agent_kwargs, validation_round=2))],
         )
 
         elapsed = time.time() - start

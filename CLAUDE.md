@@ -68,7 +68,8 @@ BaseAgent.run()
 | 4 | PowerStructures | 否 | 600s |
 | 5 | Characters + Items + Bestiary | 是 | **900s** |
 | 6 | Narrative | 否 | **900s** |
-| 7 | Validation | 否 | 600s |
+| 7a | ValidationAgent-R1（一致性 + 內容完整度 + 修復） | 否 | 600s |
+| 7b | ValidationAgent-R2（確認修復 + 最終報告） | 否 | 600s |
 
 階段 2-5 完成後會呼叫 `_inject_book_structure()` 注入檔案樹。
 
@@ -90,8 +91,9 @@ BaseAgent.run()
 LANGUAGE_RULE          # 語言規則（嵌入所有 agent）
 QUALITY_STANDARD       # 品質標準 + 參考資料要求（附加到所有 specialist）
 *_INSTRUCTIONS         # 每個 specialist 的專用指令 = LANGUAGE_RULE + 具體指令 + QUALITY_STANDARD
-RESEARCH_INSTRUCTIONS  # 研究 Agent 指令（含 ## Title 要求）
-VALIDATION_INSTRUCTIONS # 驗證 Agent 指令
+RESEARCH_INSTRUCTIONS   # 研究 Agent 指令（含 ## Title 要求）
+VALIDATION_INSTRUCTIONS # 驗證 Agent 指令（R1：一致性 + 內容完整度）
+VERIFICATION_INSTRUCTIONS # 確認 Agent 指令（R2：確認修復 + 最終報告）
 ```
 
 ## 新增 Agent 的步驟

@@ -9,6 +9,7 @@ import pytest
 from slima_agents.agents.base import BaseAgent, AgentResult
 from slima_agents.agents.context import WorldContext
 from slima_agents.worldbuild.research import ResearchAgent
+from slima_agents.worldbuild.validator import ValidationAgent
 
 
 class StubAgent(BaseAgent):
@@ -155,3 +156,47 @@ async def test_research_agent_fallback_without_title():
         assert agent.suggested_title == ""
         overview = await context.read("overview")
         assert "without title" in overview
+
+
+@pytest.mark.asyncio
+async def test_validation_agent_round_parameter():
+    """ValidationAgent should change name, prompt, and instructions based on round."""
+    context = WorldContext()
+
+    agent_r1 = ValidationAgent(
+        context=context,
+        book_token="bk_test",
+        validation_round=1,
+    )
+    agent_r2 = ValidationAgent(
+        context=context,
+        book_token="bk_test",
+        validation_round=2,
+    )
+
+    # Name reflects round
+    assert agent_r1.name == "ValidationAgent-R1"
+    assert agent_r2.name == "ValidationAgent-R2"
+
+    # System prompts use different instructions
+    sp_r1 = agent_r1.system_prompt()
+    sp_r2 = agent_r2.system_prompt()
+    assert "Round 1" in sp_r1
+    assert "Round 2" in sp_r2
+    assert "content completeness" in sp_r1
+    assert "Verification Agent" in sp_r2
+
+    # Initial messages differ
+    msg_r1 = agent_r1.initial_message()
+    msg_r2 = agent_r2.initial_message()
+    assert "preliminary consistency report" in msg_r1
+    assert "FINAL status report" in msg_r2
+
+
+@pytest.mark.asyncio
+async def test_validation_agent_default_round():
+    """ValidationAgent defaults to round 1 when no round specified."""
+    context = WorldContext()
+    agent = ValidationAgent(context=context, book_token="bk_test")
+    assert agent.validation_round == 1
+    assert agent.name == "ValidationAgent-R1"

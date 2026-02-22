@@ -143,3 +143,55 @@ async def test_orchestrator_splits_items_and_bestiary(mock_slima):
         assert MockItems.call_args.kwargs.get("timeout") == 1200
         assert MockBestiary.call_args.kwargs.get("timeout") == 1200
         assert MockChars.call_args.kwargs.get("timeout") == 1200
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_runs_two_validation_rounds(mock_slima):
+    """Orchestrator should run ValidationAgent twice: round 1 and round 2."""
+    with patch("slima_agents.worldbuild.orchestrator.ResearchAgent") as MockResearch, \
+         patch("slima_agents.worldbuild.orchestrator.CosmologyAgent") as MockCosmo, \
+         patch("slima_agents.worldbuild.orchestrator.GeographyAgent") as MockGeo, \
+         patch("slima_agents.worldbuild.orchestrator.HistoryAgent") as MockHist, \
+         patch("slima_agents.worldbuild.orchestrator.PeoplesAgent") as MockPeoples, \
+         patch("slima_agents.worldbuild.orchestrator.CulturesAgent") as MockCultures, \
+         patch("slima_agents.worldbuild.orchestrator.PowerStructuresAgent") as MockPower, \
+         patch("slima_agents.worldbuild.orchestrator.CharactersAgent") as MockChars, \
+         patch("slima_agents.worldbuild.orchestrator.ItemsAgent") as MockItems, \
+         patch("slima_agents.worldbuild.orchestrator.BestiaryAgent") as MockBestiary, \
+         patch("slima_agents.worldbuild.orchestrator.NarrativeAgent") as MockNarr, \
+         patch("slima_agents.worldbuild.orchestrator.ValidationAgent") as MockValid:
+
+        for MockCls in [MockResearch, MockCosmo, MockGeo, MockHist, MockPeoples,
+                        MockCultures, MockPower, MockChars, MockItems, MockBestiary,
+                        MockNarr]:
+            instance = AsyncMock()
+            instance.run = AsyncMock(return_value=_make_agent_result())
+            MockCls.return_value = instance
+
+        # ValidationAgent is called twice — return a new mock each time
+        valid_instances = []
+
+        def make_valid_instance(**kwargs):
+            inst = AsyncMock()
+            inst.run = AsyncMock(return_value=_make_agent_result())
+            inst.validation_round = kwargs.get("validation_round", 1)
+            valid_instances.append(inst)
+            return inst
+
+        MockValid.side_effect = make_valid_instance
+
+        orch = OrchestratorAgent(slima_client=mock_slima)
+        await orch.run("Test World")
+
+        # ValidationAgent should be constructed exactly twice
+        assert MockValid.call_count == 2
+
+        # First call: round 1, second call: round 2
+        calls = MockValid.call_args_list
+        assert calls[0].kwargs.get("validation_round") == 1
+        assert calls[1].kwargs.get("validation_round") == 2
+
+        # Both instances should have run()
+        assert len(valid_instances) == 2
+        for inst in valid_instances:
+            inst.run.assert_called_once()
