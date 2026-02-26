@@ -45,7 +45,7 @@ jobs:
           --nofollow-import-to=pytest
           --nofollow-import-to=tests
           --assume-yes-for-downloads
-          src/slima_agents/cli.py
+          entry.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
