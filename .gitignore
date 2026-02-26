@@ -22,5 +22,10 @@ wheels/
 .DS_Store
 Thumbs.db
 
+# Nuitka
+*.build/
+*.dist/
+*.onefile-build/
+
 # uv
 uv.lock
