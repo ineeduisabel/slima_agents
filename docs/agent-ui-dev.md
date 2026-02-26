@@ -16,6 +16,8 @@
 
 全部在本地完成，不經過 slima_rails。
 
+**限制：僅 Electron 桌面版可用。** 網頁版無法 spawn 本地 process，需偵測 `window.electronAPI?.isElectron` 決定是否顯示 Agents 入口。
+
 ---
 
 ## 架構
@@ -339,7 +341,7 @@ async checkEnvironment() {
 }
 ```
 
-- 不需要像 nexus 那樣有條件顯示（agents 功能所有使用者都能看到）
+- **僅 Electron 版顯示**：`v-if="isElectron"`（網頁版隱藏，或點擊後提示「需要桌面版」）
 - Active 狀態：深色背景 + 左側 indigo 指示條（與其他 nav 一致）
 
 ### B2. Router 新增路由
