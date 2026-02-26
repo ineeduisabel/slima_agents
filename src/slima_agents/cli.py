@@ -108,7 +108,10 @@ def ask(prompt: str, model: str | None, book: str | None, writable: bool):
 
     try:
         result = asyncio.run(_run())
-        console.print(result.full_output)
+        # Use print() instead of console.print() to avoid Rich unicode
+        # data issues in Nuitka onefile builds, and because stdout is
+        # often piped (Electron) where Rich formatting is useless.
+        print(result.full_output)
     except KeyboardInterrupt:
         console.print("\n[yellow]已取消。[/yellow]")
         raise SystemExit(130)

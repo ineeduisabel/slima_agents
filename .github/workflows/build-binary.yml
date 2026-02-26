@@ -42,6 +42,7 @@ jobs:
           --output-filename=${{ matrix.artifact }}
           --include-package=slima_agents
           --include-package-data=slima_agents
+          --include-package=rich
           --nofollow-import-to=pytest
           --nofollow-import-to=tests
           --assume-yes-for-downloads
