@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from ..agents.context import WorldContext
+from ..progress import ProgressEmitter
 from ..slima.client import SlimaClient
 from .research import ResearchAgent
 from .validator import ValidationAgent
@@ -26,7 +27,6 @@ from .specialists.bestiary import BestiaryAgent
 from .specialists.narrative import NarrativeAgent
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 
 def _detect_language(text: str) -> str:
@@ -132,6 +132,21 @@ def _format_structure_tree(nodes: list[dict], prefix: str = "") -> str:
     return "\n".join(lines)
 
 
+def _flatten_paths(nodes: list[dict], prefix: str = "") -> list[str]:
+    """Recursively extract all file paths from a book structure tree."""
+    paths: list[str] = []
+    for node in nodes:
+        name = node.get("name", "")
+        kind = node.get("kind", "file")
+        children = node.get("children") or []
+        path = f"{prefix}{name}" if prefix else name
+        if kind == "folder" or children:
+            paths.extend(_flatten_paths(children, path + "/"))
+        else:
+            paths.append(path)
+    return paths
+
+
 class OrchestratorAgent:
     """協調完整的世界觀建構管線。"""
 
@@ -139,199 +154,267 @@ class OrchestratorAgent:
         self,
         slima_client: SlimaClient,
         model: str | None = None,
+        emitter: ProgressEmitter | None = None,
+        console: Console | None = None,
     ):
         self.slima = slima_client
         self.model = model
         self.context = WorldContext()
+        self.emitter = emitter or ProgressEmitter(enabled=False)
+        self.console = console or Console()
 
     async def run(self, prompt: str) -> str:
         """執行完整管線，回傳 book token。"""
         start = time.time()
         lang = _detect_language(prompt)
         L = _LANG_PATHS[lang]
+        book_token = ""
 
-        console.print(Panel(f"[bold]世界觀建構 Agent[/bold]\n{prompt}", border_style="blue"))
+        self.emitter.pipeline_start(prompt=prompt, total_stages=12)
+        self.console.print(Panel(f"[bold]世界觀建構 Agent[/bold]\n{prompt}", border_style="blue"))
 
         # 將使用者原始需求存入 WorldContext，確保所有 Agent 都知道要建構什麼
         self.context.user_prompt = prompt
 
-        # 步驟 1：研究（不需要書籍，先產出世界觀內容和標題）
-        research = ResearchAgent(context=self.context, model=self.model, prompt=prompt)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task_id = progress.add_task("[階段 1] 研究 Agent 正在分析提示詞...", total=None)
-            result = await research.run()
-            if not result.full_output.strip():
-                progress.update(task_id, description="[階段 1] 研究 Agent [yellow]重試中[/yellow]...")
+        try:
+            # 步驟 1：研究（不需要書籍，先產出世界觀內容和標題）
+            self.emitter.stage_start(1, "research", ["ResearchAgent"])
+            stage_t0 = time.time()
+            research = ResearchAgent(context=self.context, model=self.model, prompt=prompt)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                TimeElapsedColumn(),
+                console=self.console,
+            ) as progress:
+                task_id = progress.add_task("[階段 1] 研究 Agent 正在分析提示詞...", total=None)
+                self.emitter.agent_start(1, "ResearchAgent")
                 result = await research.run()
+                if not result.full_output.strip():
+                    progress.update(task_id, description="[階段 1] 研究 Agent [yellow]重試中[/yellow]...")
+                    result = await research.run()
 
-        if not result.full_output.strip():
-            console.print(
-                "  [red]研究 Agent 連續兩次回傳空白。請檢查 Claude CLI 是否正常運作：[/red]\n"
-                "  [dim]  claude -p \"hello\" --output-format text[/dim]"
+            if not result.full_output.strip():
+                self.console.print(
+                    "  [red]研究 Agent 連續兩次回傳空白。請檢查 Claude CLI 是否正常運作：[/red]\n"
+                    "  [dim]  claude -p \"hello\" --output-format text[/dim]"
+                )
+                raise RuntimeError("ResearchAgent returned empty output after retry")
+
+            self.emitter.agent_complete(
+                stage=1, agent="ResearchAgent",
+                duration_s=result.duration_s, timed_out=result.timed_out,
+                summary=result.summary, num_turns=result.num_turns, cost_usd=result.cost_usd,
             )
-            raise RuntimeError("ResearchAgent returned empty output after retry")
+            self.emitter.stage_complete(1, "research", time.time() - stage_t0)
 
-        overview_text = self.context.serialize_for_prompt()
-        if overview_text == "(No world context populated yet.)":
-            console.print("  [yellow]警告：研究 Agent 有輸出但解析失敗，WorldContext 為空[/yellow]")
-            logger.warning(f"Research output (first 500 chars): {result.full_output[:500]}")
+            overview_text = self.context.serialize_for_prompt()
+            if overview_text == "(No world context populated yet.)":
+                self.console.print("  [yellow]警告：研究 Agent 有輸出但解析失敗，WorldContext 為空[/yellow]")
+                logger.warning(f"Research output (first 500 chars): {result.full_output[:500]}")
 
-        console.print(f"  [green]研究完成：[/green] {result.summary[:80]}")
+            self.console.print(f"  [green]研究完成：[/green] {result.summary[:80]}")
 
-        # 步驟 2：用研究 Agent 產出的標題和描述建立 Slima 書籍
-        book_title = research.suggested_title or prompt[:60]
-        book_description = research.suggested_description or prompt[:200]
-        with _status("正在建立 Slima 書籍..."):
-            book = await self.slima.create_book(
-                title=book_title,
-                description=book_description,
-            )
-        book_token = book.token
-        console.print(f"  書籍已建立：[cyan]{book_token}[/cyan]  標題：[yellow]{book_title}[/yellow]")
+            # 步驟 2：用研究 Agent 產出的標題和描述建立 Slima 書籍
+            self.emitter.stage_start(2, "book_creation")
+            stage_t0 = time.time()
+            book_title = research.suggested_title or prompt[:60]
+            book_description = research.suggested_description or prompt[:200]
+            with _status("正在建立 Slima 書籍...", self.console):
+                book = await self.slima.create_book(
+                    title=book_title,
+                    description=book_description,
+                )
+            book_token = book.token
+            self.emitter.book_created(book_token, book_title, book_description)
+            self.emitter.stage_complete(2, "book_creation", time.time() - stage_t0)
+            self.console.print(f"  書籍已建立：[cyan]{book_token}[/cyan]  標題：[yellow]{book_title}[/yellow]")
 
-        agent_kwargs = dict(
-            context=self.context,
-            book_token=book_token,
-            model=self.model,
-        )
-
-        # 步驟 3：建立總覽檔案
-        with _status(f"正在寫入 {L['overview_file']}..."):
-            overview = self.context.serialize_for_prompt()
-            await self.slima.create_file(
-                book_token,
-                path=L["overview_file"],
-                content=f"{L['overview_title']}\n\n{overview}",
-                commit_message=L["overview_commit"],
-            )
-
-        # 步驟 4：階段 2 — 宇宙觀 + 地理 + 歷史（平行）
-        await self._run_phase(
-            "階段 2：基礎",
-            [
-                ("宇宙觀", CosmologyAgent(**agent_kwargs)),
-                ("地理", GeographyAgent(**agent_kwargs)),
-                ("歷史", HistoryAgent(**agent_kwargs)),
-            ],
-        )
-        await self._inject_book_structure(book_token)
-
-        # 步驟 5：階段 3 — 種族 + 文化（平行）
-        await self._run_phase(
-            "階段 3：文化",
-            [
-                ("種族", PeoplesAgent(**agent_kwargs)),
-                ("文化", CulturesAgent(**agent_kwargs)),
-            ],
-        )
-        await self._inject_book_structure(book_token)
-
-        # 步驟 6：階段 4 — 權力結構
-        await self._run_phase(
-            "階段 4：權力結構",
-            [("權力結構", PowerStructuresAgent(**agent_kwargs))],
-        )
-        await self._inject_book_structure(book_token)
-
-        # 步驟 7：階段 5 — 角色 + 物品 + 怪獸圖鑑（平行，加長 timeout）
-        await self._run_phase(
-            "階段 5：細節",
-            [
-                ("角色", CharactersAgent(**agent_kwargs)),
-                ("物品", ItemsAgent(**agent_kwargs)),
-                ("怪獸圖鑑", BestiaryAgent(**agent_kwargs)),
-            ],
-        )
-        await self._inject_book_structure(book_token)
-
-        # 步驟 8：階段 6 — 敘事
-        await self._run_phase(
-            "階段 6：敘事",
-            [("敘事", NarrativeAgent(**agent_kwargs))],
-        )
-
-        # 步驟 9：建立詞彙表
-        with _status(f"正在寫入 {L['glossary_file']}..."):
-            glossary_content = self._build_glossary(L)
-            await self.slima.create_file(
-                book_token,
-                path=L["glossary_file"],
-                content=glossary_content,
-                commit_message=L["glossary_commit"],
+            agent_kwargs = dict(
+                context=self.context,
+                book_token=book_token,
+                model=self.model,
             )
 
-        # 步驟 10：驗證（第一輪 — 一致性 + 內容完整度檢查 + 修復）
-        await self._run_phase(
-            "階段 7a：驗證",
-            [("驗證-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
-        )
+            # 步驟 3：建立總覽檔案
+            self.emitter.stage_start(3, "overview")
+            stage_t0 = time.time()
+            with _status(f"正在寫入 {L['overview_file']}...", self.console):
+                overview = self.context.serialize_for_prompt()
+                await self.slima.create_file(
+                    book_token,
+                    path=L["overview_file"],
+                    content=f"{L['overview_title']}\n\n{overview}",
+                    commit_message=L["overview_commit"],
+                )
+            self.emitter.file_created(L["overview_file"])
+            self.emitter.stage_complete(3, "overview", time.time() - stage_t0)
 
-        # 步驟 11：驗證（第二輪 — 確認修復 + 最終報告）
-        await self._run_phase(
-            "階段 7b：確認",
-            [("驗證-R2", ValidationAgent(**agent_kwargs, validation_round=2))],
-        )
-
-        # 步驟 12：建立 README.md
-        with _status("正在建立 README.md..."):
-            try:
-                structure = await self.slima.get_book_structure(book_token)
-                tree_str = _format_structure_tree(structure)
-            except Exception:
-                tree_str = "(unable to retrieve)"
-            readme_content = self._build_readme(
-                title=book_title,
-                description=book_description,
-                tree=tree_str,
-                L=L,
+            # 步驟 4：階段 2 — 宇宙觀 + 地理 + 歷史（平行）
+            await self._run_phase(
+                "階段 2：基礎",
+                [
+                    ("宇宙觀", CosmologyAgent(**agent_kwargs)),
+                    ("地理", GeographyAgent(**agent_kwargs)),
+                    ("歷史", HistoryAgent(**agent_kwargs)),
+                ],
+                stage=4, book_token=book_token,
             )
-            await self.slima.create_file(
-                book_token,
-                path="README.md",
-                content=readme_content,
-                commit_message="Add README",
+            await self._inject_book_structure(book_token)
+
+            # 步驟 5：階段 3 — 種族 + 文化（平行）
+            await self._run_phase(
+                "階段 3：文化",
+                [
+                    ("種族", PeoplesAgent(**agent_kwargs)),
+                    ("文化", CulturesAgent(**agent_kwargs)),
+                ],
+                stage=5, book_token=book_token,
+            )
+            await self._inject_book_structure(book_token)
+
+            # 步驟 6：階段 4 — 權力結構
+            await self._run_phase(
+                "階段 4：權力結構",
+                [("權力結構", PowerStructuresAgent(**agent_kwargs))],
+                stage=6, book_token=book_token,
+            )
+            await self._inject_book_structure(book_token)
+
+            # 步驟 7：階段 5 — 角色 + 物品 + 怪獸圖鑑（平行）
+            await self._run_phase(
+                "階段 5：細節",
+                [
+                    ("角色", CharactersAgent(**agent_kwargs)),
+                    ("物品", ItemsAgent(**agent_kwargs)),
+                    ("怪獸圖鑑", BestiaryAgent(**agent_kwargs)),
+                ],
+                stage=7, book_token=book_token,
+            )
+            await self._inject_book_structure(book_token)
+
+            # 步驟 8：階段 6 — 敘事
+            await self._run_phase(
+                "階段 6：敘事",
+                [("敘事", NarrativeAgent(**agent_kwargs))],
+                stage=8, book_token=book_token,
             )
 
-        elapsed = time.time() - start
-        console.print()
-        console.print(
-            Panel(
-                f"[bold green]世界觀聖經建構完成！[/bold green]\n\n"
-                f"書籍 Token：[cyan]{book_token}[/cyan]\n"
-                f"耗時：{elapsed:.0f} 秒\n\n"
-                f"在此查看：{self.slima._base_url}/books/{book_token}",
-                border_style="green",
+            # 步驟 9：建立詞彙表
+            self.emitter.stage_start(9, "glossary")
+            stage_t0 = time.time()
+            with _status(f"正在寫入 {L['glossary_file']}...", self.console):
+                glossary_content = self._build_glossary(L)
+                await self.slima.create_file(
+                    book_token,
+                    path=L["glossary_file"],
+                    content=glossary_content,
+                    commit_message=L["glossary_commit"],
+                )
+            self.emitter.file_created(L["glossary_file"])
+            self.emitter.stage_complete(9, "glossary", time.time() - stage_t0)
+
+            # 步驟 10：驗證（第一輪 — 一致性 + 內容完整度檢查 + 修復）
+            await self._run_phase(
+                "階段 7a：驗證",
+                [("驗證-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
+                stage=10, book_token=book_token,
             )
-        )
 
-        return book_token
+            # 步驟 11：驗證（第二輪 — 確認修復 + 最終報告）
+            await self._run_phase(
+                "階段 7b：確認",
+                [("驗證-R2", ValidationAgent(**agent_kwargs, validation_round=2))],
+                stage=11, book_token=book_token,
+            )
 
-    async def _run_phase(self, phase_name: str, agents: list[tuple[str, object]]) -> None:
+            # 步驟 12：建立 README.md
+            self.emitter.stage_start(12, "readme")
+            stage_t0 = time.time()
+            with _status("正在建立 README.md...", self.console):
+                try:
+                    structure = await self.slima.get_book_structure(book_token)
+                    tree_str = _format_structure_tree(structure)
+                except Exception:
+                    tree_str = "(unable to retrieve)"
+                readme_content = self._build_readme(
+                    title=book_title,
+                    description=book_description,
+                    tree=tree_str,
+                    L=L,
+                )
+                await self.slima.create_file(
+                    book_token,
+                    path="README.md",
+                    content=readme_content,
+                    commit_message="Add README",
+                )
+            self.emitter.file_created("README.md")
+            self.emitter.stage_complete(12, "readme", time.time() - stage_t0)
+
+            elapsed = time.time() - start
+            self.emitter.pipeline_complete(book_token=book_token, total_duration_s=elapsed, success=True)
+
+            self.console.print()
+            self.console.print(
+                Panel(
+                    f"[bold green]世界觀聖經建構完成！[/bold green]\n\n"
+                    f"書籍 Token：[cyan]{book_token}[/cyan]\n"
+                    f"耗時：{elapsed:.0f} 秒\n\n"
+                    f"在此查看：{self.slima._base_url}/books/{book_token}",
+                    border_style="green",
+                )
+            )
+
+            return book_token
+
+        except Exception as e:
+            elapsed = time.time() - start
+            self.emitter.error(str(e))
+            self.emitter.pipeline_complete(book_token=book_token, total_duration_s=elapsed, success=False)
+            raise
+
+    async def _run_phase(
+        self, phase_name: str, agents: list[tuple[str, object]],
+        *, stage: int = 0, book_token: str = "",
+    ) -> None:
         """以平行方式執行一組 Agent，並顯示進度。"""
+        agent_names = [name for name, _ in agents]
+        self.emitter.stage_start(stage, phase_name, agent_names)
+        stage_t0 = time.time()
+
+        # Snapshot book structure BEFORE (for file diffing)
+        pre_paths: set[str] = set()
+        if book_token:
+            pre_paths = await self._get_all_file_paths(book_token)
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             TimeElapsedColumn(),
-            console=console,
+            console=self.console,
         ) as progress:
             tasks = {}
             for name, agent in agents:
                 tasks[name] = progress.add_task(f"[{phase_name}] {name}...", total=None)
 
             async def _run_one(name: str, agent):
+                self.emitter.agent_start(stage, name)
                 try:
                     result = await agent.run()
+                    self.emitter.agent_complete(
+                        stage=stage, agent=name,
+                        duration_s=result.duration_s, timed_out=result.timed_out,
+                        summary=result.summary, num_turns=result.num_turns,
+                        cost_usd=result.cost_usd,
+                    )
                     if result.timed_out:
                         progress.update(tasks[name], description=f"[{phase_name}] {name} [yellow]部分完成[/yellow]")
                     else:
                         progress.update(tasks[name], description=f"[{phase_name}] {name} [green]完成[/green]")
                     return name, result
                 except Exception as e:
+                    self.emitter.error(str(e), stage=stage, agent=name)
                     progress.update(tasks[name], description=f"[{phase_name}] {name} [red]失敗[/red]")
                     logger.error(f"{name} 失敗：{e}")
                     raise
@@ -341,15 +424,31 @@ class OrchestratorAgent:
                 return_exceptions=True,
             )
 
+        # Snapshot book structure AFTER and emit file_created for new paths
+        if book_token:
+            post_paths = await self._get_all_file_paths(book_token)
+            for new_path in sorted(post_paths - pre_paths):
+                self.emitter.file_created(new_path)
+
+        self.emitter.stage_complete(stage, phase_name, time.time() - stage_t0)
+
         for r in results:
             if isinstance(r, Exception):
-                console.print(f"  [red]錯誤：[/red] {r}")
+                self.console.print(f"  [red]錯誤：[/red] {r}")
             else:
                 name, result = r
                 if result.timed_out:
-                    console.print(f"  [yellow]{name}：[/yellow] 超時但檔案已建立（部分完成），繼續下一階段")
+                    self.console.print(f"  [yellow]{name}：[/yellow] 超時但檔案已建立（部分完成），繼續下一階段")
                 else:
-                    console.print(f"  [green]{name}：[/green] {result.summary[:80]}")
+                    self.console.print(f"  [green]{name}：[/green] {result.summary[:80]}")
+
+    async def _get_all_file_paths(self, book_token: str) -> set[str]:
+        """Get all file paths in the book for diffing."""
+        try:
+            structure = await self.slima.get_book_structure(book_token)
+            return set(_flatten_paths(structure))
+        except Exception:
+            return set()
 
     async def _inject_book_structure(self, book_token: str) -> None:
         """Read the current book structure and store it in WorldContext.
@@ -436,11 +535,12 @@ class OrchestratorAgent:
 class _status:
     """簡易 context manager，印出狀態訊息。"""
 
-    def __init__(self, msg: str):
+    def __init__(self, msg: str, console: Console | None = None):
         self.msg = msg
+        self.console = console or Console()
 
     def __enter__(self):
-        console.print(f"  [dim]{self.msg}[/dim]")
+        self.console.print(f"  [dim]{self.msg}[/dim]")
         return self
 
     def __exit__(self, *exc):

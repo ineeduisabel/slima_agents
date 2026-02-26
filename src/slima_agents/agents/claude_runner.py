@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,16 @@ DEFAULT_MAX_TURNS = 50
 
 class ClaudeRunnerError(Exception):
     """Raised when the claude CLI subprocess fails."""
+
+
+@dataclass
+class RunOutput:
+    """Structured output from a claude CLI run."""
+
+    text: str
+    num_turns: int = 0
+    cost_usd: float = 0.0
+    timed_out: bool = False
 
 
 class ClaudeRunner:
@@ -35,8 +46,8 @@ class ClaudeRunner:
         timeout: int = DEFAULT_TIMEOUT,
         max_turns: int = DEFAULT_MAX_TURNS,
         retry_on_timeout: bool = True,
-    ) -> str:
-        """Run a prompt through the claude CLI and return the text output.
+    ) -> RunOutput:
+        """Run a prompt through the claude CLI and return structured output.
 
         Args:
             prompt: The user message to send.
@@ -49,7 +60,7 @@ class ClaudeRunner:
                 that create files (retry could cause duplicates).
 
         Returns:
-            The text output from claude CLI.
+            RunOutput with text, num_turns, cost_usd, and timed_out.
 
         Raises:
             ClaudeRunnerError: If the subprocess fails after retries.
@@ -94,7 +105,7 @@ class ClaudeRunner:
                     limit=10 * 1024 * 1024,  # 10 MB — stream-json lines can be very large
                 )
 
-                result_text, num_turns, timed_out = await _read_stream(
+                result_text, num_turns, cost_usd, timed_out = await _read_stream(
                     proc, timeout
                 )
 
@@ -115,7 +126,7 @@ class ClaudeRunner:
 
                 logger.debug(
                     f"[ClaudeRunner] done: {len(result_text)} chars, "
-                    f"{num_turns} turns"
+                    f"{num_turns} turns, ${cost_usd:.4f}"
                 )
 
                 if not result_text:
@@ -126,7 +137,11 @@ class ClaudeRunner:
                     last_error = ClaudeRunnerError("Empty result")
                     continue
 
-                return result_text
+                return RunOutput(
+                    text=result_text,
+                    num_turns=num_turns,
+                    cost_usd=cost_usd,
+                )
 
             except (asyncio.CancelledError, KeyboardInterrupt):
                 logger.info("[ClaudeRunner] cancelled, killing subprocess")
@@ -142,13 +157,14 @@ class ClaudeRunner:
 async def _read_stream(
     proc: asyncio.subprocess.Process,
     timeout: int,
-) -> tuple[str, int, bool]:
+) -> tuple[str, int, float, bool]:
     """Read stream-json events from the subprocess stdout.
 
-    Returns (result_text, num_turns, timed_out).
+    Returns (result_text, num_turns, cost_usd, timed_out).
     """
     result_text = ""
     num_turns = 0
+    cost_usd = 0.0
     last_assistant_text = ""
 
     try:
@@ -179,10 +195,10 @@ async def _read_stream(
                 elif etype == "result":
                     result_text = event.get("result", "")
                     num_turns = event.get("num_turns", 0)
-                    cost = event.get("total_cost_usd", 0)
+                    cost_usd = event.get("total_cost_usd", 0.0)
                     logger.debug(
                         f"[stream] result event: {len(result_text)} chars, "
-                        f"{num_turns} turns, ${cost:.4f}"
+                        f"{num_turns} turns, ${cost_usd:.4f}"
                     )
                     break
 
@@ -200,7 +216,7 @@ async def _read_stream(
             await asyncio.wait_for(proc.wait(), timeout=5)
         except (asyncio.TimeoutError, ProcessLookupError, OSError):
             pass
-        return last_assistant_text or result_text, num_turns, True
+        return last_assistant_text or result_text, num_turns, cost_usd, True
 
     # Drain remaining pipe data and ensure the process exits cleanly.
     # Without draining, the subprocess transport __del__ may raise
@@ -221,4 +237,4 @@ async def _read_stream(
     if not result_text and last_assistant_text:
         result_text = last_assistant_text
 
-    return result_text, num_turns, False
+    return result_text, num_turns, cost_usd, False

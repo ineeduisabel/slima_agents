@@ -27,6 +27,7 @@ class FileSnapshot(BaseModel):
     blob_hash: str | None = Field(None, alias="blobHash")
     word_count: int | None = Field(None, alias="wordCount")
     is_manuscript: bool | None = Field(None, alias="isManuscript")
+    parent_token: str | None = Field(None, alias="parentToken")
     position: int
     children: list[FileSnapshot] | None = None
 

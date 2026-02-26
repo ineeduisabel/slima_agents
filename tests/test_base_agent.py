@@ -7,9 +7,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from slima_agents.agents.base import BaseAgent, AgentResult
+from slima_agents.agents.claude_runner import RunOutput
 from slima_agents.agents.context import WorldContext
 from slima_agents.worldbuild.research import ResearchAgent
 from slima_agents.worldbuild.validator import ValidationAgent
+
+
+def _run_output(text: str = "Done", num_turns: int = 1, cost_usd: float = 0.01) -> RunOutput:
+    """Helper to create a RunOutput for mocking."""
+    return RunOutput(text=text, num_turns=num_turns, cost_usd=cost_usd)
 
 
 class StubAgent(BaseAgent):
@@ -32,7 +38,9 @@ async def test_agent_returns_result():
     context = WorldContext()
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value="Task completed successfully. Created files.")
+        MockRunner.run = AsyncMock(
+            return_value=_run_output("Task completed successfully. Created files.")
+        )
 
         agent = StubAgent(
             context=context,
@@ -43,6 +51,9 @@ async def test_agent_returns_result():
         assert isinstance(result, AgentResult)
         assert "Task completed" in result.summary
         assert result.full_output == "Task completed successfully. Created files."
+        assert result.num_turns == 1
+        assert result.cost_usd == 0.01
+        assert result.duration_s > 0
 
         MockRunner.run.assert_called_once()
         call_kwargs = MockRunner.run.call_args
@@ -56,7 +67,7 @@ async def test_agent_passes_allowed_tools():
     context = WorldContext()
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value="Done")
+        MockRunner.run = AsyncMock(return_value=_run_output())
 
         agent = StubAgent(
             context=context,
@@ -77,7 +88,7 @@ async def test_agent_passes_model():
     context = WorldContext()
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value="Done")
+        MockRunner.run = AsyncMock(return_value=_run_output())
 
         agent = StubAgent(
             context=context,
@@ -98,7 +109,7 @@ async def test_agent_summary_truncated():
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
         long_output = "x" * 500
-        MockRunner.run = AsyncMock(return_value=long_output)
+        MockRunner.run = AsyncMock(return_value=_run_output(long_output))
 
         agent = StubAgent(
             context=context,
@@ -130,7 +141,7 @@ async def test_research_agent_parses_title():
     )
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value=mock_output)
+        MockRunner.run = AsyncMock(return_value=_run_output(mock_output))
 
         agent = ResearchAgent(context=context, prompt="台灣鬼怪故事")
         await agent.run()
@@ -152,7 +163,7 @@ async def test_research_agent_fallback_without_title():
     )
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value=mock_output)
+        MockRunner.run = AsyncMock(return_value=_run_output(mock_output))
 
         agent = ResearchAgent(context=context, prompt="test world")
         await agent.run()
@@ -180,7 +191,7 @@ async def test_research_agent_parses_description():
     )
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value=mock_output)
+        MockRunner.run = AsyncMock(return_value=_run_output(mock_output))
 
         agent = ResearchAgent(context=context, prompt="dark fantasy world")
         await agent.run()
@@ -207,7 +218,7 @@ async def test_research_agent_description_without_title():
     )
 
     with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
-        MockRunner.run = AsyncMock(return_value=mock_output)
+        MockRunner.run = AsyncMock(return_value=_run_output(mock_output))
 
         agent = ResearchAgent(context=context, prompt="shadow world")
         await agent.run()

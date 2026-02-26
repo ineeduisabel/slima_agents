@@ -10,10 +10,9 @@ import click
 from rich.console import Console
 
 from .config import Config, ConfigError
+from .progress import ProgressEmitter
 from .slima.client import SlimaClient
 from .worldbuild.orchestrator import OrchestratorAgent
-
-console = Console()
 
 
 @click.group()
@@ -31,7 +30,8 @@ def main(verbose: bool):
 @main.command()
 @click.argument("prompt")
 @click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
-def worldbuild(prompt: str, model: str | None):
+@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 進度事件到 stdout。")
+def worldbuild(prompt: str, model: str | None, json_progress: bool):
     """從提示詞建構完整的世界觀聖經（World Bible）。
 
     \b
@@ -39,11 +39,20 @@ def worldbuild(prompt: str, model: str | None):
       slima-agents worldbuild "英雄聯盟世界觀"
       slima-agents worldbuild "1980年代的美國" --model claude-opus-4-6
       slima-agents -v worldbuild "DnD 被遺忘的國度"
+      slima-agents worldbuild --json-progress "海賊王世界觀"
     """
+    # When --json-progress is on, Rich goes to stderr so stdout is pure NDJSON
+    if json_progress:
+        cli_console = Console(file=sys.stderr, no_color=True)
+    else:
+        cli_console = Console()
+
+    emitter = ProgressEmitter(enabled=json_progress)
+
     try:
         config = Config.load(model_override=model)
     except ConfigError as e:
-        console.print(f"[red]設定錯誤：[/red] {e}")
+        cli_console.print(f"[red]設定錯誤：[/red] {e}")
         raise SystemExit(1)
 
     async def _run():
@@ -51,19 +60,22 @@ def worldbuild(prompt: str, model: str | None):
             orch = OrchestratorAgent(
                 slima_client=slima,
                 model=config.model,
+                emitter=emitter,
+                console=cli_console,
             )
             return await orch.run(prompt)
 
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
         raise SystemExit(130)
 
 
 @main.command()
 def status():
     """檢查 Slima 認證狀態與 Claude CLI 可用性。"""
+    console = Console()
     try:
         config = Config.load()
         console.print(f"[green]Slima Token：[/green] ...{config.slima_api_token[-8:]}")

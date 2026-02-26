@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 
 from rich.console import Console
@@ -24,14 +25,23 @@ class AgentResult:
         full_output: str = "",
         files_created: list[str] | None = None,
         timed_out: bool = False,
+        num_turns: int = 0,
+        cost_usd: float = 0.0,
+        duration_s: float = 0.0,
     ):
         self.summary = summary
         self.full_output = full_output
         self.files_created = files_created or []
         self.timed_out = timed_out
+        self.num_turns = num_turns
+        self.cost_usd = cost_usd
+        self.duration_s = duration_s
 
     def __repr__(self) -> str:
-        return f"AgentResult(summary={self.summary!r}, files={self.files_created}, timed_out={self.timed_out})"
+        return (
+            f"AgentResult(summary={self.summary!r}, files={self.files_created}, "
+            f"timed_out={self.timed_out}, duration_s={self.duration_s:.1f})"
+        )
 
 
 class BaseAgent(ABC):
@@ -82,6 +92,7 @@ class BaseAgent(ABC):
 
         logger.info(f"[{self.name}] starting (tools: {len(tools)})")
 
+        t0 = time.time()
         try:
             output = await ClaudeRunner.run(
                 prompt=prompt,
@@ -91,15 +102,20 @@ class BaseAgent(ABC):
                 timeout=self.timeout,
                 retry_on_timeout=not has_write,
             )
+            duration = time.time() - t0
 
-            logger.info(f"[{self.name}] finished ({len(output)} chars)")
+            logger.info(f"[{self.name}] finished ({len(output.text)} chars)")
 
             return AgentResult(
-                summary=output[:200],
-                full_output=output,
+                summary=output.text[:200],
+                full_output=output.text,
+                num_turns=output.num_turns,
+                cost_usd=output.cost_usd,
+                duration_s=duration,
             )
 
         except ClaudeRunnerError as e:
+            duration = time.time() - t0
             if "Timed out" in str(e) and has_write:
                 # For MCP agents, timeout is partial success — files are already
                 # saved in Slima via MCP tool calls. Don't treat as failure.
@@ -111,6 +127,7 @@ class BaseAgent(ABC):
                     summary=f"(timeout after {self.timeout}s — partial completion, files already saved)",
                     full_output="",
                     timed_out=True,
+                    duration_s=duration,
                 )
             # For non-timeout errors or agents without write tools, re-raise
             raise

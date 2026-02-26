@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from io import StringIO
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from slima_agents.agents.base import AgentResult
+from slima_agents.progress import ProgressEmitter
 from slima_agents.slima.client import SlimaClient
 from slima_agents.slima.types import Book, Commit
-from slima_agents.worldbuild.orchestrator import OrchestratorAgent, _detect_language
+from slima_agents.worldbuild.orchestrator import (
+    OrchestratorAgent,
+    _detect_language,
+    _flatten_paths,
+)
 
 
 @pytest.fixture
@@ -35,7 +42,7 @@ def mock_slima():
 
 
 def _make_agent_result(summary="Done"):
-    return AgentResult(summary=summary, full_output=summary)
+    return AgentResult(summary=summary, full_output=summary, duration_s=1.0)
 
 
 @pytest.mark.asyncio
@@ -96,14 +103,21 @@ async def test_orchestrator_injects_book_structure(mock_slima):
             instance.run = AsyncMock(return_value=_make_agent_result())
             MockCls.return_value = instance
 
+        # ResearchAgent needs string attributes for title/description
+        MockResearch.return_value.suggested_title = "Test World"
+        MockResearch.return_value.suggested_description = "A test world"
+
         orch = OrchestratorAgent(
             slima_client=mock_slima,
         )
 
         await orch.run("Test World")
 
-        # get_book_structure should be called after phases 2, 3, 4, 5, and for README
-        assert mock_slima.get_book_structure.call_count == 5
+        # get_book_structure is called:
+        #   - 2x per _run_phase (pre/post file diff) x 7 phases = 14
+        #   - 4x _inject_book_structure (after phases 2-5)
+        #   - 1x for README
+        assert mock_slima.get_book_structure.call_count == 19
         # Context should have book_structure populated
         structure = await orch.context.read("book_structure")
         assert "meta/" in structure
@@ -192,6 +206,98 @@ async def test_orchestrator_runs_two_validation_rounds(mock_slima):
         assert len(valid_instances) == 2
         for inst in valid_instances:
             inst.run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_json_progress(mock_slima):
+    """Orchestrator should emit NDJSON events when emitter is enabled."""
+    buf = StringIO()
+    emitter = ProgressEmitter(enabled=True, _stream=buf)
+
+    with patch("slima_agents.worldbuild.orchestrator.ResearchAgent") as MockResearch, \
+         patch("slima_agents.worldbuild.orchestrator.CosmologyAgent") as MockCosmo, \
+         patch("slima_agents.worldbuild.orchestrator.GeographyAgent") as MockGeo, \
+         patch("slima_agents.worldbuild.orchestrator.HistoryAgent") as MockHist, \
+         patch("slima_agents.worldbuild.orchestrator.PeoplesAgent") as MockPeoples, \
+         patch("slima_agents.worldbuild.orchestrator.CulturesAgent") as MockCultures, \
+         patch("slima_agents.worldbuild.orchestrator.PowerStructuresAgent") as MockPower, \
+         patch("slima_agents.worldbuild.orchestrator.CharactersAgent") as MockChars, \
+         patch("slima_agents.worldbuild.orchestrator.ItemsAgent") as MockItems, \
+         patch("slima_agents.worldbuild.orchestrator.BestiaryAgent") as MockBestiary, \
+         patch("slima_agents.worldbuild.orchestrator.NarrativeAgent") as MockNarr, \
+         patch("slima_agents.worldbuild.orchestrator.ValidationAgent") as MockValid:
+
+        for MockCls in [MockResearch, MockCosmo, MockGeo, MockHist, MockPeoples,
+                        MockCultures, MockPower, MockChars, MockItems, MockBestiary,
+                        MockNarr, MockValid]:
+            instance = AsyncMock()
+            instance.run = AsyncMock(return_value=_make_agent_result())
+            MockCls.return_value = instance
+
+        # ResearchAgent needs string attributes for title/description
+        MockResearch.return_value.suggested_title = "Test World"
+        MockResearch.return_value.suggested_description = "A test world"
+
+        orch = OrchestratorAgent(
+            slima_client=mock_slima,
+            emitter=emitter,
+        )
+        await orch.run("Test World")
+
+    # Parse all events
+    buf.seek(0)
+    events = [json.loads(line) for line in buf if line.strip()]
+    event_types = [e["event"] for e in events]
+
+    # Should start with pipeline_start and end with pipeline_complete
+    assert event_types[0] == "pipeline_start"
+    assert events[0]["prompt"] == "Test World"
+    assert events[0]["total_stages"] == 12
+    assert event_types[-1] == "pipeline_complete"
+    assert events[-1]["success"] is True
+    assert events[-1]["book_token"] == "bk_test"
+
+    # Should contain expected event types
+    assert "stage_start" in event_types
+    assert "stage_complete" in event_types
+    assert "agent_start" in event_types
+    assert "agent_complete" in event_types
+    assert "book_created" in event_types
+    assert "file_created" in event_types
+
+
+class TestFlattenPaths:
+    """Tests for _flatten_paths()."""
+
+    def test_simple_structure(self):
+        nodes = [
+            {"name": "meta", "kind": "folder", "children": [
+                {"name": "overview.md", "kind": "file"},
+            ]},
+            {"name": "README.md", "kind": "file"},
+        ]
+        paths = _flatten_paths(nodes)
+        assert set(paths) == {"meta/overview.md", "README.md"}
+
+    def test_nested_folders(self):
+        nodes = [
+            {"name": "worldview", "kind": "folder", "children": [
+                {"name": "cosmology", "kind": "folder", "children": [
+                    {"name": "creation.md", "kind": "file"},
+                    {"name": "magic.md", "kind": "file"},
+                ]},
+                {"name": "overview.md", "kind": "file"},
+            ]},
+        ]
+        paths = _flatten_paths(nodes)
+        assert set(paths) == {
+            "worldview/cosmology/creation.md",
+            "worldview/cosmology/magic.md",
+            "worldview/overview.md",
+        }
+
+    def test_empty(self):
+        assert _flatten_paths([]) == []
 
 
 class TestDetectLanguage:

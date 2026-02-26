@@ -194,8 +194,39 @@ class SlimaClient:
         return McpSearchResponse.model_validate(data)
 
     async def get_book_structure(self, book_token: str) -> list[dict]:
-        """Get the file/folder tree of a book via the latest commit's filesSnapshot."""
+        """Get the file/folder tree of a book via the latest commit's filesSnapshot.
+
+        The API returns a flat list with parentToken references.
+        This method rebuilds the nested tree structure.
+        """
         commits = await self.list_commits(book_token, limit=1)
         if not commits:
             return []
-        return [fs.model_dump() for fs in commits[0].files_snapshot]
+
+        # Build a lookup dict and reconstruct the tree from parentToken
+        all_items = {
+            fs.token: {
+                "name": fs.name,
+                "kind": fs.kind,
+                "position": fs.position,
+                "children": [],
+            }
+            for fs in commits[0].files_snapshot
+        }
+
+        roots: list[dict] = []
+        for fs in commits[0].files_snapshot:
+            node = all_items[fs.token]
+            if fs.parent_token and fs.parent_token in all_items:
+                all_items[fs.parent_token]["children"].append(node)
+            else:
+                roots.append(node)
+
+        # Normalize: folders keep kind="folder", files keep their kind
+        for item in all_items.values():
+            if not item["children"]:
+                del item["children"]
+            else:
+                item["kind"] = "folder"
+
+        return roots
