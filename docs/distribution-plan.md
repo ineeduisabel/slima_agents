@@ -148,30 +148,47 @@ slima-agents ask --book bk_abc123 --writable "幫我建一個 notes.md 檔案"
 
 #### 1b.1 擴充 `tools.py` — 新增 `SLIMA_MCP_ALL_READ_TOOLS`
 
-新增包含 `list_books`、`get_book`、`get_writing_stats` 的完整唯讀工具列表：
+新增包含 `list_books`、`get_book`、`get_writing_stats`、`get_chapter` 的完整唯讀工具列表：
 
 ```python
+# All read-only tools including library-level (list/get books) and book-level operations.
+# Superset of SLIMA_MCP_READ_TOOLS — used by AskAgent for general-purpose queries.
 SLIMA_MCP_ALL_READ_TOOLS: list[str] = [
     "mcp__slima__list_books",
     "mcp__slima__get_book",
     "mcp__slima__get_book_structure",
     "mcp__slima__get_writing_stats",
+    "mcp__slima__get_chapter",
     "mcp__slima__read_file",
     "mcp__slima__search_content",
 ]
 ```
 
+> 註：現有 `SLIMA_MCP_READ_TOOLS`（3 個書籍內唯讀工具）目前未被任何檔案 import，保持不動。
+
 #### 1b.2 新增 `AskAgent`
 
 **檔案**：`src/slima_agents/agents/ask.py`（新增）
 
-繼承 `BaseAgent`，最小實作：
+繼承 `BaseAgent`，使用 `**kwargs` 慣例（與 `ValidationAgent`、`ResearchAgent` 一致）：
 
 ```python
+from __future__ import annotations
+
+from .base import BaseAgent
+from .tools import SLIMA_MCP_ALL_READ_TOOLS, SLIMA_MCP_TOOLS
+
+
 class AskAgent(BaseAgent):
-    def __init__(self, context, book_token="", model=None, prompt="",
-                 timeout=300, writable=False):
-        super().__init__(context, book_token, model, timeout)
+    """Passes a user prompt directly to claude with Slima MCP tools.
+
+    Unlike worldbuild specialists, this agent does not use WorldContext
+    content or pipeline stages. It is a simple one-shot query agent.
+    """
+
+    def __init__(self, *, prompt: str = "", writable: bool = False, **kwargs):
+        kwargs.setdefault("timeout", 300)
+        super().__init__(**kwargs)
         self._prompt = prompt
         self._writable = writable
 
@@ -199,14 +216,21 @@ class AskAgent(BaseAgent):
 ```
 
 關鍵設計：
-- **timeout=300**（5 分鐘，比 worldbuild 的 3600s 短很多）
+- **`**kwargs` 模式**：與 `ValidationAgent` / `ResearchAgent` 一致，`kwargs.setdefault("timeout", 300)` 預設 5 分鐘但可被外部覆蓋
 - **`--writable` flag**：預設唯讀（安全），加 flag 才允許寫入
 - **book_token 可選**：有傳就注入到 system prompt，沒傳就讓 claude 自己用 `list_books` 找
 - **不需要 WorldContext 內容**：傳空 context，不注入任何世界觀資料
 
 #### 1b.3 新增 CLI `ask` 指令
 
+**重要**：`ask` 不需要 `SlimaClient`（不呼叫 Slima HTTP API），MCP 工具由 claude CLI 自己透過 MCP server 處理。因此**不使用 `Config.load()`**（它會強制要求 `SLIMA_API_TOKEN`），改為直接解析 model。
+
 ```python
+import os
+
+from .config import DEFAULT_MODEL
+
+
 @main.command()
 @click.argument("prompt")
 @click.option("--model", "-m", default=None, help="指定 Claude 模型。")
@@ -215,33 +239,60 @@ class AskAgent(BaseAgent):
               help="允許建立/編輯檔案（預設唯讀）。")
 def ask(prompt, model, book, writable):
     """快速提問或操作 Slima 書籍（輕量版，不跑完整管線）。"""
-    ...
+    console = Console()
+    resolved_model = model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)
+
+    async def _run():
+        from .agents.ask import AskAgent
+        from .agents.context import WorldContext
+
+        agent = AskAgent(
+            context=WorldContext(),
+            book_token=book or "",
+            model=resolved_model,
+            prompt=prompt,
+            writable=writable,
+        )
+        return await agent.run()
+
+    try:
+        result = asyncio.run(_run())
+        console.print(result.full_output)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]已取消。[/yellow]")
+        raise SystemExit(130)
+    except Exception as e:
+        console.print(f"[red]錯誤：[/red] {e}")
+        raise SystemExit(1)
 ```
 
-注意：`ask` 不需要 `SlimaClient`（不呼叫 Slima HTTP API），MCP 工具由 claude CLI 自己透過 MCP server 處理。
+> 為什麼不用 `Config.load()`：`config.py:38-41` 在找不到 `SLIMA_API_TOKEN` 時會拋 `ConfigError`，
+> 但 `ask` 完全不需要 Slima HTTP API token。使用者只要有 Claude CLI + slima-mcp 設定好就能用。
 
 #### 1b.4 新增測試
 
 **檔案**：`tests/test_ask_agent.py`（新增）
 
 ```
-測試項目：
-1. test_ask_agent_returns_result — 基本呼叫 + 回傳 AgentResult
-2. test_ask_agent_readonly_tools — 預設只有唯讀工具
-3. test_ask_agent_writable_tools — --writable 啟用寫入工具
-4. test_ask_agent_with_book_token — book_token 注入到 system prompt
-5. test_ask_agent_without_book_token — 不帶 book 時 system prompt 不含 token
-6. test_ask_agent_timeout_short — 預設 timeout 是 300s
+測試項目（8 個）：
+1. test_ask_agent_returns_result     — mock ClaudeRunner，驗證回傳 AgentResult + name == "AskAgent"
+2. test_ask_agent_readonly_tools     — 預設 allowed_tools() 回傳 SLIMA_MCP_ALL_READ_TOOLS
+3. test_ask_agent_writable_tools     — writable=True 時回傳 SLIMA_MCP_TOOLS
+4. test_ask_agent_with_book_token    — book_token 出現在 system_prompt()
+5. test_ask_agent_without_book_token — 不帶 book 時 system_prompt() 不含 "book_token"
+6. test_ask_agent_timeout_default    — 不傳 timeout 時預設 300s
+7. test_ask_agent_timeout_override   — 可透過 timeout=600 覆蓋預設值
+8. test_ask_agent_initial_message    — initial_message() 原封不動回傳 prompt 字串
 ```
 
 #### 1b.5 檔案變更清單
 
 | 檔案 | 操作 | 說明 |
 |------|------|------|
-| `src/slima_agents/agents/tools.py` | 修改 | 新增 `SLIMA_MCP_ALL_READ_TOOLS` |
+| `src/slima_agents/agents/tools.py` | 修改 | 新增 `SLIMA_MCP_ALL_READ_TOOLS`（7 個唯讀工具） |
 | `src/slima_agents/agents/ask.py` | **新增** | AskAgent 類別 |
-| `src/slima_agents/cli.py` | 修改 | 新增 `ask` 指令 |
-| `tests/test_ask_agent.py` | **新增** | AskAgent 單元測試 |
+| `src/slima_agents/cli.py` | 修改 | 新增 `ask` 指令（不依賴 `Config.load()`） |
+| `tests/test_ask_agent.py` | **新增** | AskAgent 單元測試（8 個） |
 
 #### 1b.6 驗證方式
 
@@ -257,6 +308,16 @@ slima-agents ask "列出我所有的書"
 slima-agents ask --book bk_xxx "這本書有哪些章節？"
 slima-agents ask --book bk_xxx --writable "幫我建一個 notes.md 檔案"
 ```
+
+#### 1b.7 Review 修正紀錄
+
+| 嚴重度 | 原問題 | 修正內容 |
+|--------|--------|---------|
+| 高 | `Config.load()` 強制要求 `SLIMA_API_TOKEN`，但 `ask` 不需要 token | CLI 改用 `model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)`，不經過 `Config.load()` |
+| 中 | `__init__` 用位置參數呼叫 `super()`，不符 `ValidationAgent`/`ResearchAgent` 的 `**kwargs` 慣例 | 改為 `def __init__(self, *, prompt, writable, **kwargs)` + `kwargs.setdefault("timeout", 300)` |
+| 低 | 唯讀工具列表缺少 `get_chapter` | 加入 `mcp__slima__get_chapter`，共 7 個唯讀工具 |
+| 低 | CLI 虛擬碼不完整 | 補回完整實作，含 error handling 和 `KeyboardInterrupt` |
+| 低 | 測試只有 6 個，缺少 timeout 覆蓋和 initial_message 驗證 | 增加到 8 個測試 |
 
 ---
 
