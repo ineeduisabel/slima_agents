@@ -108,10 +108,12 @@ def ask(prompt: str, model: str | None, book: str | None, writable: bool):
 
     try:
         result = asyncio.run(_run())
-        # Use print() instead of console.print() to avoid Rich unicode
-        # data issues in Nuitka onefile builds, and because stdout is
-        # often piped (Electron) where Rich formatting is useless.
-        print(result.full_output)
+        # Write UTF-8 directly to stdout buffer to avoid:
+        # 1. Rich _unicode_data crash in Nuitka onefile builds
+        # 2. Windows cp950 encoding errors with Chinese text
+        sys.stdout.buffer.write(result.full_output.encode("utf-8"))
+        sys.stdout.buffer.write(b"\n")
+        sys.stdout.buffer.flush()
     except KeyboardInterrupt:
         console.print("\n[yellow]已取消。[/yellow]")
         raise SystemExit(130)
