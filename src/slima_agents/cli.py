@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 
 import click
 from rich.console import Console
 
-from .config import Config, ConfigError
+from .config import DEFAULT_MODEL, Config, ConfigError
 from .progress import ProgressEmitter
 from .slima.client import SlimaClient
 from .worldbuild.orchestrator import OrchestratorAgent
@@ -70,6 +71,50 @@ def worldbuild(prompt: str, model: str | None, json_progress: bool):
     except KeyboardInterrupt:
         cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
         raise SystemExit(130)
+
+
+@main.command()
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型。")
+@click.option("--book", "-b", default=None, help="指定書籍 token（如 bk_abc123）。")
+@click.option(
+    "--writable", "-w", is_flag=True, default=False,
+    help="允許建立/編輯檔案（預設唯讀）。",
+)
+def ask(prompt: str, model: str | None, book: str | None, writable: bool):
+    """快速提問或操作 Slima 書籍（輕量版，不跑完整管線）。
+
+    \b
+    使用範例：
+      slima-agents ask "列出我所有的書"
+      slima-agents ask --book bk_abc123 "這本書有哪些章節？"
+      slima-agents ask --book bk_abc123 --writable "幫我建一個 notes.md"
+    """
+    console = Console()
+    resolved_model = model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)
+
+    async def _run():
+        from .agents.ask import AskAgent
+        from .agents.context import WorldContext
+
+        agent = AskAgent(
+            context=WorldContext(),
+            book_token=book or "",
+            model=resolved_model,
+            prompt=prompt,
+            writable=writable,
+        )
+        return await agent.run()
+
+    try:
+        result = asyncio.run(_run())
+        console.print(result.full_output)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]已取消。[/yellow]")
+        raise SystemExit(130)
+    except Exception as e:
+        console.print(f"[red]錯誤：[/red] {e}")
+        raise SystemExit(1)
 
 
 @main.command()
