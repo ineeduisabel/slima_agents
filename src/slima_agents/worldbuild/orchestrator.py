@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 
@@ -10,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from ..agents.base import AgentResult
 from ..agents.context import WorldContext
 from ..lang import detect_language, flatten_paths, format_structure_tree
 from ..progress import ProgressEmitter
@@ -230,6 +232,7 @@ class OrchestratorAgent:
             )
             await self._inject_book_structure(book_token)
             await tracker.stage_complete(4)
+            await self._save_context_snapshot(book_token)
 
             # 步驟 5：階段 3 — 種族 + 文化（平行）
             await tracker.stage_start(5)
@@ -243,6 +246,7 @@ class OrchestratorAgent:
             )
             await self._inject_book_structure(book_token)
             await tracker.stage_complete(5)
+            await self._save_context_snapshot(book_token)
 
             # 步驟 6：階段 4 — 權力結構
             await tracker.stage_start(6)
@@ -253,6 +257,7 @@ class OrchestratorAgent:
             )
             await self._inject_book_structure(book_token)
             await tracker.stage_complete(6)
+            await self._save_context_snapshot(book_token)
 
             # 步驟 7：階段 5 — 角色 + 物品 + 怪獸圖鑑（平行）
             await tracker.stage_start(7)
@@ -267,6 +272,7 @@ class OrchestratorAgent:
             )
             await self._inject_book_structure(book_token)
             await tracker.stage_complete(7)
+            await self._save_context_snapshot(book_token)
 
             # 步驟 8：階段 6 — 敘事
             await tracker.stage_start(8)
@@ -276,6 +282,7 @@ class OrchestratorAgent:
                 stage=8, book_token=book_token,
             )
             await tracker.stage_complete(8)
+            await self._save_context_snapshot(book_token)
 
             # 步驟 9：建立詞彙表
             await tracker.stage_start(9)
@@ -295,7 +302,7 @@ class OrchestratorAgent:
 
             # 步驟 10：驗證（第一輪 — 一致性 + 內容完整度檢查 + 修復）
             await tracker.stage_start(10)
-            await self._run_phase(
+            r1_result = await self._run_phase(
                 "階段 7a：驗證",
                 [("驗證-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
                 stage=10, book_token=book_token,
@@ -303,10 +310,15 @@ class OrchestratorAgent:
             await tracker.stage_complete(10)
 
             # 步驟 11：驗證（第二輪 — 確認修復 + 最終報告）
+            # Chain R2 onto R1's session so R2 doesn't need to re-read all files.
+            r1_session_id = r1_result[0].session_id if r1_result else ""
             await tracker.stage_start(11)
             await self._run_phase(
                 "階段 7b：確認",
-                [("驗證-R2", ValidationAgent(**agent_kwargs, validation_round=2))],
+                [("驗證-R2", ValidationAgent(
+                    **agent_kwargs, validation_round=2,
+                    resume_session=r1_session_id,
+                ))],
                 stage=11, book_token=book_token,
             )
             await tracker.stage_complete(11)
@@ -363,8 +375,8 @@ class OrchestratorAgent:
     async def _run_phase(
         self, phase_name: str, agents: list[tuple[str, object]],
         *, stage: int = 0, book_token: str = "",
-    ) -> None:
-        """以平行方式執行一組 Agent，並顯示進度。"""
+    ) -> list[AgentResult]:
+        """以平行方式執行一組 Agent，並顯示進度。回傳成功的 AgentResult 列表。"""
         agent_names = [name for name, _ in agents]
         self.emitter.stage_start(stage, phase_name, agent_names)
         stage_t0 = time.time()
@@ -418,15 +430,19 @@ class OrchestratorAgent:
 
         self.emitter.stage_complete(stage, phase_name, time.time() - stage_t0)
 
+        agent_results = []
         for r in results:
             if isinstance(r, Exception):
                 self.console.print(f"  [red]錯誤：[/red] {r}")
             else:
                 name, result = r
+                agent_results.append(result)
                 if result.timed_out:
                     self.console.print(f"  [yellow]{name}：[/yellow] 超時但檔案已建立（部分完成），繼續下一階段")
                 else:
                     self.console.print(f"  [green]{name}：[/green] {result.summary[:80]}")
+
+        return agent_results
 
     async def _get_all_file_paths(self, book_token: str) -> set[str]:
         """Get all file paths in the book for diffing."""
@@ -449,6 +465,20 @@ class OrchestratorAgent:
             logger.debug(f"Injected book structure ({len(tree_str)} chars)")
         except Exception as e:
             logger.warning(f"Failed to inject book structure: {e}")
+
+    async def _save_context_snapshot(self, book_token: str) -> None:
+        """Save current context as a JSON snapshot for O(1) resume loading."""
+        try:
+            snapshot = self.context.to_snapshot()
+            await self.slima.write_file(
+                book_token,
+                path="agent-log/context-snapshot.json",
+                content=json.dumps(snapshot, ensure_ascii=False, indent=2),
+                commit_message="Update context snapshot",
+            )
+            logger.debug("Saved context snapshot")
+        except Exception as e:
+            logger.warning(f"Failed to save context snapshot: {e}")
 
     def _build_readme(self, title: str, description: str, tree: str, L: dict) -> str:
         """Build a README.md for the root of the book."""

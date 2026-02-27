@@ -168,6 +168,231 @@ def ask(prompt: str, model: str | None, book: str | None, writable: bool):
 
 
 @main.command()
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
+@click.option("--book", "-b", default=None, help="繼續寫作指定書籍（恢復模式）。")
+@click.option("--source-book", "-s", default=None, help="來源書籍 token（讀取既有書來規劃）。")
+@click.option("--plan", "plan_file", default=None, type=click.Path(exists=True), help="使用自訂 plan JSON 檔案。")
+@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 進度事件到 stdout。")
+def write(prompt: str, model: str | None, book: str | None, source_book: str | None, plan_file: str | None, json_progress: bool):
+    """Plan-driven pipeline: AI 先規劃再依序寫作（任何類型）。
+
+    \b
+    使用範例：
+      slima-agents write "寫密室推理"
+      slima-agents write --book bk_abc123 "繼續寫作"
+      slima-agents write --source-book bk_abc123 "依照這本書重寫"
+      slima-agents write --plan my-plan.json "執行自訂計畫"
+      slima-agents write "A sci-fi adventure" --model claude-opus-4-6
+    """
+    if json_progress:
+        cli_console = Console(file=sys.stderr, no_color=True)
+    else:
+        cli_console = Console()
+
+    emitter = ProgressEmitter(enabled=json_progress)
+
+    try:
+        config = Config.load(model_override=model)
+    except ConfigError as e:
+        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        raise SystemExit(1)
+
+    # Load external plan if provided
+    external_plan = None
+    if plan_file:
+        import json as json_mod
+        from .pipeline.models import PipelinePlan
+        try:
+            with open(plan_file, encoding="utf-8") as f:
+                data = json_mod.load(f)
+            external_plan = PipelinePlan.model_validate(data)
+            cli_console.print(f"  [green]Loaded plan from:[/green] {plan_file}")
+        except Exception as e:
+            cli_console.print(f"[red]Plan 檔案錯誤：[/red] {e}")
+            raise SystemExit(1)
+
+    async def _run():
+        from .pipeline.orchestrator import GenericOrchestrator
+        async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
+            orch = GenericOrchestrator(
+                slima_client=slima,
+                model=config.model,
+                emitter=emitter,
+                console=cli_console,
+            )
+            return await orch.run(
+                prompt,
+                resume_book=book,
+                external_plan=external_plan,
+                source_book=source_book,
+            )
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        raise SystemExit(130)
+
+
+@main.command()
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型。")
+@click.option("--book", "-b", default=None, help="來源書籍 token（讀取既有書來規劃）。")
+def plan(prompt: str, model: str | None, book: str | None):
+    """只產生 pipeline plan JSON（不執行）。
+
+    \b
+    使用範例：
+      slima-agents plan "寫密室推理"
+      slima-agents plan --book bk_abc123 "依照這本書重寫"
+      slima-agents plan "A romance novel" --model claude-opus-4-6
+    """
+    cli_console = Console(file=sys.stderr)
+
+    try:
+        config = Config.load(model_override=model)
+    except ConfigError as e:
+        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        raise SystemExit(1)
+
+    async def _run():
+        from .pipeline.context import DynamicContext
+        from .pipeline.planner import GenericPlannerAgent
+
+        ctx = DynamicContext(allowed_sections=["concept"])
+        planner = GenericPlannerAgent(
+            context=ctx, model=config.model, prompt=prompt,
+            source_book=book or "",
+        )
+
+        if book:
+            cli_console.print(f"[dim]Running planner (source book: {book})...[/dim]")
+        else:
+            cli_console.print("[dim]Running planner...[/dim]")
+        await planner.run()
+
+        if not planner.plan:
+            cli_console.print("[red]Planner failed to produce a valid plan.[/red]")
+            raise SystemExit(1)
+
+        return planner.plan
+
+    try:
+        result_plan = asyncio.run(_run())
+        # Output plan JSON to stdout
+        sys.stdout.buffer.write(result_plan.model_dump_json(indent=2).encode("utf-8"))
+        sys.stdout.buffer.write(b"\n")
+        sys.stdout.buffer.flush()
+    except KeyboardInterrupt:
+        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        raise SystemExit(130)
+    except SystemExit:
+        raise
+    except Exception as e:
+        cli_console.print(f"[red]錯誤：[/red] {e}")
+        raise SystemExit(1)
+
+
+@main.command("plan-loop")
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型。")
+@click.option("--book", "-b", default=None, help="來源書籍 token（讀取既有書來規劃）。")
+def plan_loop(prompt: str, model: str | None, book: str | None):
+    """互動式 plan 修訂迴圈：產生 → 審閱 → 修改 → 核准。
+
+    \b
+    使用範例：
+      slima-agents plan-loop "寫密室推理"
+      slima-agents plan-loop --book bk_abc123 "依照這本書重寫"
+    """
+    import json as json_mod
+
+    cli_console = Console(file=sys.stderr)
+
+    try:
+        config = Config.load(model_override=model)
+    except ConfigError as e:
+        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        raise SystemExit(1)
+
+    async def _run():
+        from .pipeline.orchestrator import GenericOrchestrator
+
+        async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
+            orch = GenericOrchestrator(
+                slima_client=slima,
+                model=config.model,
+                console=cli_console,
+            )
+
+            # Initial plan
+            cli_console.print("[dim]Generating initial plan...[/dim]")
+            current_plan, session_id = await orch.plan(prompt, source_book=book)
+            version = 1
+
+            while True:
+                # Display plan summary
+                cli_console.print()
+                cli_console.print(f"[bold cyan]===== Plan v{version} =====[/bold cyan]")
+                cli_console.print(f"  Title: [yellow]{current_plan.title}[/yellow]")
+                cli_console.print(f"  Genre: {current_plan.genre}")
+                cli_console.print(f"  Action: {current_plan.action_type}")
+                cli_console.print(f"  Stages: {len(current_plan.stages)}")
+                for s in sorted(current_plan.stages, key=lambda x: x.number):
+                    cli_console.print(f"    {s.number}. {s.display_name} ({s.name})")
+                if current_plan.validation:
+                    cli_console.print(f"    {current_plan.validation.number}. Validation (R1+R2)")
+                if current_plan.polish_stage:
+                    cli_console.print(f"    {current_plan.polish_stage.number}. {current_plan.polish_stage.display_name}")
+                cli_console.print()
+
+                # Get user input
+                cli_console.print("[bold]Enter feedback to revise, or 'approve' to accept:[/bold]")
+                try:
+                    feedback = input("> ").strip()
+                except EOFError:
+                    cli_console.print("[yellow]EOF — aborting.[/yellow]")
+                    raise SystemExit(130)
+
+                if not feedback:
+                    continue
+
+                if feedback.lower() in ("approve", "ok", "yes", "y", "確認", "核准"):
+                    cli_console.print("[green]Plan approved![/green]")
+                    break
+
+                # Revise
+                cli_console.print(f"[dim]Revising plan (v{version + 1})...[/dim]")
+                current_plan, session_id = await orch.revise_plan(
+                    prompt=prompt,
+                    feedback=feedback,
+                    session_id=session_id,
+                    source_book=book,
+                )
+                version += 1
+
+            return current_plan
+
+    try:
+        final_plan = asyncio.run(_run())
+        # Output final approved plan JSON to stdout
+        sys.stdout.buffer.write(
+            final_plan.model_dump_json(indent=2).encode("utf-8")
+        )
+        sys.stdout.buffer.write(b"\n")
+        sys.stdout.buffer.flush()
+    except KeyboardInterrupt:
+        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        raise SystemExit(130)
+    except SystemExit:
+        raise
+    except Exception as e:
+        cli_console.print(f"[red]錯誤：[/red] {e}")
+        raise SystemExit(1)
+
+
+@main.command()
 def status():
     """檢查 Slima 認證狀態與 Claude CLI 可用性。"""
     console = Console()

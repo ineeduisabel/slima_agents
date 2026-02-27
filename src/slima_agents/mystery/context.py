@@ -62,6 +62,24 @@ class MysteryContext:
             setattr(self, section, current + "\n" + content if current else content)
         return f"Appended to context section '{section}'"
 
+    def to_snapshot(self) -> dict[str, str]:
+        """Serialize non-empty sections to a JSON-safe dict for persistence."""
+        data: dict[str, str] = {}
+        if self.user_prompt:
+            data["user_prompt"] = self.user_prompt
+        for section in self.SECTIONS:
+            value = getattr(self, section)
+            if value:
+                data[section] = value
+        return data
+
+    def from_snapshot(self, data: dict[str, str]) -> None:
+        """Restore context from a snapshot dict."""
+        self.user_prompt = data.get("user_prompt", "")
+        for section in self.SECTIONS:
+            if section in data:
+                setattr(self, section, data[section])
+
     def serialize_for_prompt(self) -> str:
         """Render all non-empty sections as a string for agent system prompts."""
         parts = []

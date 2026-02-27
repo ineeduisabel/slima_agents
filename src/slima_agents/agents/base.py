@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
+from typing import Any
 
 from rich.console import Console
 
@@ -28,6 +29,7 @@ class AgentResult:
         num_turns: int = 0,
         cost_usd: float = 0.0,
         duration_s: float = 0.0,
+        session_id: str = "",
     ):
         self.summary = summary
         self.full_output = full_output
@@ -36,6 +38,7 @@ class AgentResult:
         self.num_turns = num_turns
         self.cost_usd = cost_usd
         self.duration_s = duration_s
+        self.session_id = session_id
 
     def __repr__(self) -> str:
         return (
@@ -52,15 +55,17 @@ class BaseAgent(ABC):
 
     def __init__(
         self,
-        context: WorldContext,
+        context: WorldContext | Any,
         book_token: str = "",
         model: str | None = None,
         timeout: int = 3600,
+        resume_session: str = "",
     ):
         self.context = context
         self.book_token = book_token
         self.model = model
         self.timeout = timeout
+        self.resume_session = resume_session
 
     @property
     @abstractmethod
@@ -101,6 +106,7 @@ class BaseAgent(ABC):
                 model=self.model,
                 timeout=self.timeout,
                 retry_on_timeout=not has_write,
+                resume_session=self.resume_session,
             )
             duration = time.time() - t0
 
@@ -112,6 +118,7 @@ class BaseAgent(ABC):
                 num_turns=output.num_turns,
                 cost_usd=output.cost_usd,
                 duration_s=duration,
+                session_id=output.session_id,
             )
 
         except ClaudeRunnerError as e:

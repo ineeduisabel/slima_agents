@@ -1,6 +1,6 @@
 [project]
 name = "slima-agents"
-version = "0.1.0"
+version = "0.2.0"
 description = "World-building agent system powered by Anthropic Claude and Slima"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -3,11 +3,18 @@
 ## 快速指令
 
 ```bash
-uv run pytest                                          # 執行測試（99 tests）
+uv run pytest                                          # 執行測試（227 tests）
 uv run slima-agents status                             # 檢查 API 連線
 uv run slima-agents worldbuild "需求描述"               # 建構世界觀
 uv run slima-agents mystery "密室殺人事件"              # 建構懸疑推理小說
 uv run slima-agents mystery --book bk_xxx "繼續寫作"    # 恢復模式
+uv run slima-agents write "寫密室推理"                  # Plan-driven pipeline（任何類型）
+uv run slima-agents write --book bk_xxx "繼續寫作"      # Plan-driven 恢復模式
+uv run slima-agents write --plan plan.json "執行計畫"   # 用自訂 plan
+uv run slima-agents write --source-book bk_xxx "重寫"  # 讀既有書來規劃+寫作
+uv run slima-agents plan "寫密室推理"                   # 只產 plan JSON 到 stdout
+uv run slima-agents plan --book bk_xxx "依照這本書重寫" # 讀既有書來規劃
+uv run slima-agents plan-loop "寫密室推理"              # 互動式 plan 修訂迴圈
 uv run slima-agents worldbuild "需求描述" --model claude-opus-4-6  # 指定模型
 uv run slima-agents -v worldbuild "需求描述"              # 除錯日誌
 ```
@@ -37,6 +44,12 @@ src/slima_agents/
 │       ├── cosmology.py, geography.py, history.py
 │       ├── peoples.py, cultures.py, power_structures.py
 │       └── characters.py, items.py, bestiary.py, narrative.py
+├── pipeline/                 # Plan-driven 通用管線（新增類型 = 零程式碼）
+│   ├── models.py             # PipelinePlan, StageDefinition, ValidationDefinition (Pydantic)
+│   ├── context.py            # DynamicContext：動態 section 名稱，由 plan 定義
+│   ├── writer_agent.py       # WriterAgent：通用寫作 Agent（1 個 class 取代所有 specialist）
+│   ├── planner.py            # GenericPlannerAgent：分析 prompt → PipelinePlan JSON + revise() + source_book
+│   └── orchestrator.py       # GenericOrchestrator：plan() / revise_plan() / execute() / run()
 └── mystery/
     ├── orchestrator.py       # MysteryOrchestratorAgent.run()：11 階段依序管線 + 恢復模式
     ├── planner.py            # PlannerAgent：純文字分析（無 MCP），解析犯罪概念 + 標題
@@ -127,6 +140,56 @@ ClaudeRunner 使用 `--output-format stream-json --verbose` 即時讀取事件�
 - 從書籍讀取已有內容重建 `MysteryContext`
 - 跳過已完成階段，從中斷處繼續
 
+### Plan-Driven Pipeline（通用管線）
+
+```
+User prompt → GenericPlannerAgent → PipelinePlan (JSON)
+           → GenericOrchestrator → 建書 → WriterAgent × N stages
+           → Validation R1+R2 (session chaining) → Polish
+```
+
+**核心概念**：Claude 先規劃 pipeline（Plan 模式），再用同一個通用 WriterAgent 依序執行。新增類型 = 零程式碼。
+
+**資料模型** (`pipeline/models.py`)：
+- `StageDefinition`: number, name, display_name, instructions, initial_message, tool_set, timeout 等
+- `ValidationDefinition`: R1 + R2 指令，session chaining
+- `PipelinePlan`: title, genre, language, concept_summary, context_sections, stages[], validation?, polish_stage?, action_type, source_book
+
+**DynamicContext** (`pipeline/context.py`)：
+- 取代固定的 WorldContext / MysteryContext
+- Section 名稱由 plan 的 `context_sections` 動態定義
+- `book_structure` 永遠隱含可用
+- 相同介面：`read()`, `write()`, `append()`, `serialize_for_prompt()`, `to_snapshot()`, `from_snapshot()`
+
+**WriterAgent** (`pipeline/writer_agent.py`)：
+- 1 個 class 取代所有 specialist agent
+- System prompt = `LANGUAGE_RULE` + stage instructions + quality standard + book_token + context
+- `tool_set`: `"write"` → SLIMA_MCP_TOOLS, `"read"` → SLIMA_MCP_READ_TOOLS, `"none"` → []
+
+**GenericPlannerAgent** (`pipeline/planner.py`)：
+- `source_book=""` 參數：有值時取得 `SLIMA_MCP_ALL_READ_TOOLS` 唯讀工具
+- 無 `source_book` 時 → 無 MCP 工具（純文字）
+- System prompt 包含 PipelinePlan JSON schema，`source_book` 時附加 Source Book 區塊
+- `run()` → 輸出 PipelinePlan JSON（支援 markdown fence 容錯），存入 `self.plan`
+- `revise(feedback, session_id)` → session chaining 修改 plan，更新 `self.plan`
+
+**GenericOrchestrator** (`pipeline/orchestrator.py`)：
+
+公開 API（統一入口）：
+- `plan(prompt, source_book?)` → `(PipelinePlan, session_id)` — 只跑規劃
+- `revise_plan(prompt, feedback, session_id, source_book?)` → `(PipelinePlan, session_id)` — session chaining 修改 plan
+- `execute(prompt, plan, resume_book?)` → `book_token` — 執行已核准的 plan
+- `run(prompt, resume_book?, external_plan?, source_book?)` → `book_token` — plan + execute 向後相容包裝
+
+執行流程（`execute()`）：
+1. Book setup — `slima.create_book()` + 存 plan JSON 到 `agent-log/pipeline-plan.json`
+2. Context init — `DynamicContext.from_plan(plan)` + 注入 concept_summary
+3. Stage loop — 依序執行 `plan.stages`（WriterAgent）
+4. Validation — R1 + R2 session chaining
+5. Polish — 最後一個 WriterAgent stage
+
+**Resume 模式**：讀 `agent-log/progress.md` + `pipeline-plan.json` + `context-snapshot.json`
+
 ### 語言偵測
 
 - `lang.detect_language(prompt)` → 回傳 `'ja'`、`'ko'`、`'zh'` 或 `'en'`
@@ -178,6 +241,32 @@ POLISH_INSTRUCTIONS          # 潤色收尾
 4. 在 `mystery/orchestrator.py` 加入對應階段
 5. 更新 `tests/test_mystery_orchestrator.py` mock 列表
 
+## 新增寫作類型（Plan-Driven）
+
+使用 plan-driven pipeline，新增寫作類型**不需要寫任何程式碼**。
+GenericPlannerAgent 會根據 prompt 自動設計 pipeline。
+
+手動建立 plan 的方式：
+```bash
+# 產出 plan JSON，手動編輯後執行
+slima-agents plan "寫羅曼史" > romance-plan.json
+# 編輯 romance-plan.json（調整 stages、instructions 等）
+slima-agents write --plan romance-plan.json "執行計畫"
+
+# 互動式修訂 plan（產生 → 審閱 → 修改 → 核准）
+slima-agents plan-loop "寫密室推理"
+# 讀既有書來規劃
+slima-agents plan --book bk_xxx "依照這本書重寫"
+# 讀既有書 + 規劃 + 執行
+slima-agents write --source-book bk_xxx "依照這本書重寫"
+```
+
+### ProgressEmitter 事件
+
+新增兩個 plan 相關 NDJSON 事件：
+- `plan_ready`：plan 產出後發送（含 plan_json, session_id, version）
+- `plan_approved`：plan 被核准後發送（含 version）
+
 ## 修改 Prompt 模板的注意事項
 
 - `LANGUAGE_RULE`（worldbuild/templates.py）嵌入 worldbuild + mystery 所有 agent — 改這裡影響兩邊
@@ -210,7 +299,7 @@ claude -p <prompt> --verbose --output-format stream-json \
 ## 測試
 
 ```bash
-uv run pytest -v                                       # 全部 99 tests
+uv run pytest -v                                       # 全部 227 tests
 uv run pytest tests/test_base_agent.py -v              # Agent 單元測試
 uv run pytest tests/test_orchestrator.py -v            # Worldbuild orchestrator 整合測試
 uv run pytest tests/test_lang.py -v                    # 語言偵測 + 結構工具測試
@@ -218,9 +307,76 @@ uv run pytest tests/test_tracker.py -v                 # PipelineTracker 測試
 uv run pytest tests/test_mystery_planner.py -v         # Mystery planner 測試
 uv run pytest tests/test_mystery_orchestrator.py -v    # Mystery orchestrator 整合測試
 uv run pytest tests/test_slima_client.py -v            # API client 測試
+uv run pytest tests/test_session_resume.py -v          # Session resume 測試（Phase 1-3a）
+uv run pytest tests/test_context_snapshot.py -v        # Context snapshot 測試（Phase 4）
+uv run pytest tests/test_pipeline_models.py -v         # Pipeline 資料模型測試
+uv run pytest tests/test_dynamic_context.py -v         # DynamicContext 測試
+uv run pytest tests/test_writer_agent.py -v            # WriterAgent 測試
+uv run pytest tests/test_generic_planner.py -v         # GenericPlannerAgent 測試
+uv run pytest tests/test_generic_orchestrator.py -v    # GenericOrchestrator 整合測試
+uv run pytest tests/test_planner_upgrade.py -v         # PlannerAgent 升級測試（source_book + revise）
+uv run pytest tests/test_orchestrator_split.py -v      # Orchestrator split 測試（plan/revise/execute）
 ```
 
 所有 Agent 測試透過 mock `ClaudeRunner` 執行。Orchestrator 測試 mock 所有 Agent + SlimaClient。
+
+## CI/CD
+
+### 自動測試 (`.github/workflows/test.yml`)
+
+- **觸發**：push 到 `main` 或 `features/**`，PR 到 `main`
+- **環境**：ubuntu-latest + Python 3.11 + uv
+- **執行**：`uv run pytest -v`
+
+### 二進位編譯 (`.github/workflows/build-binary.yml`)
+
+- **觸發**：push `v*` tag（如 `v0.2.0`）
+- **平台矩陣**：
+
+| OS | Artifact 名稱 |
+|----|--------------|
+| ubuntu-22.04 | `slima-agents-linux-x64` |
+| windows-latest | `slima-agents-windows-x64.exe` |
+| macos-14 | `slima-agents-macos-arm64` |
+
+- **工具**：Nuitka standalone onefile（`--standalone --onefile`）
+- **入口**：`entry.py`（使用 absolute import 避免 onefile 解壓後 relative import 失敗）
+- **包含**：`--include-package=slima_agents --include-package=rich`
+- **排除**：`--nofollow-import-to=pytest --nofollow-import-to=tests`
+- **產出**：自動上傳到 GitHub Release（`softprops/action-gh-release@v2`）
+
+### 發布流程
+
+```bash
+# 1. 確認測試通過
+uv run pytest -v
+
+# 2. 更新版本號（pyproject.toml）
+# version = "0.2.0"
+
+# 3. commit + tag + push
+git add -A && git commit -m "release: v0.2.0"
+git tag v0.2.0
+git push origin main --tags
+# → GitHub Actions 自動編譯 3 平台 → Release
+```
+
+### 前端整合
+
+Electron 前端透過 spawn 二進位 + NDJSON 事件流串接：
+
+```
+Electron Main → spawn("slima-agents", ["write", "--json-progress", prompt])
+             → stdout readline → 解析 NDJSON 事件 → IPC → Vue Renderer
+```
+
+前端專案：`slima_vue`（Electron + Vue 3 + Pinia）
+
+關鍵檔案：
+- `electron/services/agentService.ts` — binary 管理 + subprocess spawn + NDJSON 解析
+- `electron/preload.ts` — IPC bridge（`window.electronAPI.agent.*`）
+- `src/stores/agentStore.ts` — Pinia store（session 管理 + 事件處理）
+- `src/types/agent.ts` — 型別定義
 
 ## 環境
 

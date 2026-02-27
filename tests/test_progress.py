@@ -149,6 +149,36 @@ class TestEmitterOutput:
         raw = buf.getvalue()
         assert "世界觀" in raw  # not escaped as \\uXXXX
 
+    def test_plan_ready_schema(self):
+        emitter, buf = _make_emitter()
+        emitter.plan_ready('{"title":"Test"}', session_id="sess_abc", version=1)
+        events = _parse_events(buf)
+        ev = events[0]
+        assert ev["event"] == "plan_ready"
+        assert ev["plan_json"] == '{"title":"Test"}'
+        assert ev["session_id"] == "sess_abc"
+        assert ev["version"] == 1
+
+    def test_plan_ready_default_version(self):
+        emitter, buf = _make_emitter()
+        emitter.plan_ready("{}", session_id="s1")
+        events = _parse_events(buf)
+        assert events[0]["version"] == 1
+
+    def test_plan_approved_schema(self):
+        emitter, buf = _make_emitter()
+        emitter.plan_approved(version=2)
+        events = _parse_events(buf)
+        ev = events[0]
+        assert ev["event"] == "plan_approved"
+        assert ev["version"] == 2
+
+    def test_plan_approved_default_version(self):
+        emitter, buf = _make_emitter()
+        emitter.plan_approved()
+        events = _parse_events(buf)
+        assert events[0]["version"] == 1
+
     def test_each_line_flushed(self):
         """Each event should end with newline."""
         emitter, buf = _make_emitter()

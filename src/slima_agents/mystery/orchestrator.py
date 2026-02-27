@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -9,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from ..agents.base import AgentResult
 from ..lang import detect_language, flatten_paths, format_structure_tree
 from ..progress import ProgressEmitter
 from ..slima.client import SlimaClient
@@ -235,6 +237,7 @@ class MysteryOrchestratorAgent:
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(3)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 4: Characters ---
             if resume_from <= 4:
@@ -244,6 +247,7 @@ class MysteryOrchestratorAgent:
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(4)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 5: Plot Architecture ---
             if resume_from <= 5:
@@ -253,6 +257,7 @@ class MysteryOrchestratorAgent:
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(5)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 6: Setting ---
             if resume_from <= 6:
@@ -262,6 +267,7 @@ class MysteryOrchestratorAgent:
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(6)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 7: Act 1 Writing ---
             if resume_from <= 7:
@@ -272,6 +278,7 @@ class MysteryOrchestratorAgent:
                 await self._inject_book_structure(book_token)
                 await self._summarize_chapters(book_token, "act1_summary", L)
                 await tracker.stage_complete(7)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 8: Act 2 Writing ---
             if resume_from <= 8:
@@ -282,6 +289,7 @@ class MysteryOrchestratorAgent:
                 await self._inject_book_structure(book_token)
                 await self._summarize_chapters(book_token, "act2_summary", L)
                 await tracker.stage_complete(8)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 9: Act 3 Writing ---
             if resume_from <= 9:
@@ -292,18 +300,24 @@ class MysteryOrchestratorAgent:
                 await self._inject_book_structure(book_token)
                 await self._summarize_chapters(book_token, "act3_summary", L)
                 await tracker.stage_complete(9)
+                await self._save_context_snapshot(book_token)
 
             # --- Stage 10: Validation (R1 + R2) ---
+            # Chain R2 onto R1's session so R2 doesn't need to re-read all files.
             if resume_from <= 10:
                 await tracker.stage_start(10)
-                await self._run_stage(
+                r1_result = await self._run_stage(
                     10, "驗證-R1",
                     MysteryValidationAgent(**agent_kwargs, validation_round=1),
                     book_token,
                 )
+                r1_session_id = r1_result.session_id if r1_result else ""
                 await self._run_stage(
                     10, "驗證-R2",
-                    MysteryValidationAgent(**agent_kwargs, validation_round=2),
+                    MysteryValidationAgent(
+                        **agent_kwargs, validation_round=2,
+                        resume_session=r1_session_id,
+                    ),
                     book_token,
                 )
                 await tracker.stage_complete(10)
@@ -346,8 +360,8 @@ class MysteryOrchestratorAgent:
 
     async def _run_stage(
         self, stage: int, name: str, agent: object, book_token: str
-    ) -> None:
-        """Run a single agent with progress display."""
+    ) -> AgentResult | None:
+        """Run a single agent with progress display. Returns the AgentResult."""
         self.emitter.stage_start(stage, name, [agent.name])
         stage_t0 = time.time()
 
@@ -406,6 +420,8 @@ class MysteryOrchestratorAgent:
         else:
             self.console.print(f"  [green]{name}：[/green] {result.summary[:80]}")
 
+        return result
+
     async def _get_all_file_paths(self, book_token: str) -> set[str]:
         """Get all file paths in the book for diffing."""
         try:
@@ -454,8 +470,38 @@ class MysteryOrchestratorAgent:
         except Exception as e:
             logger.warning(f"Failed to summarize chapters: {e}")
 
+    async def _save_context_snapshot(self, book_token: str) -> None:
+        """Save current context as a JSON snapshot for O(1) resume loading."""
+        try:
+            snapshot = self.context.to_snapshot()
+            await self.slima.write_file(
+                book_token,
+                path="agent-log/context-snapshot.json",
+                content=json.dumps(snapshot, ensure_ascii=False, indent=2),
+                commit_message="Update context snapshot",
+            )
+            logger.debug("Saved context snapshot")
+        except Exception as e:
+            logger.warning(f"Failed to save context snapshot: {e}")
+
     async def _restore_context_from_book(self, book_token: str, L: dict) -> None:
-        """Restore MysteryContext from existing book files for resume mode."""
+        """Restore MysteryContext from book. Prefers JSON snapshot over individual files."""
+        # Try O(1) snapshot first
+        try:
+            resp = await self.slima.read_file(book_token, "agent-log/context-snapshot.json")
+            content = resp.content if hasattr(resp, "content") else str(resp)
+            snapshot = json.loads(content)
+            self.context.from_snapshot(snapshot)
+            logger.info("Restored context from snapshot")
+            return
+        except Exception:
+            logger.debug("No context snapshot found, falling back to file-by-file restore")
+
+        # Fallback: read individual files (legacy)
+        await self._restore_context_from_files(book_token, L)
+
+    async def _restore_context_from_files(self, book_token: str, L: dict) -> None:
+        """Legacy restore: read individual book files to rebuild context."""
         async def _try_read(path: str) -> str:
             try:
                 resp = await self.slima.read_file(book_token, path)

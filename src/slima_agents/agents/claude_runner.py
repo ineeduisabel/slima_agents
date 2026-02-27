@@ -27,6 +27,7 @@ class RunOutput:
     num_turns: int = 0
     cost_usd: float = 0.0
     timed_out: bool = False
+    session_id: str = ""
 
 
 class ClaudeRunner:
@@ -46,6 +47,7 @@ class ClaudeRunner:
         timeout: int = DEFAULT_TIMEOUT,
         max_turns: int = DEFAULT_MAX_TURNS,
         retry_on_timeout: bool = True,
+        resume_session: str = "",
     ) -> RunOutput:
         """Run a prompt through the claude CLI and return structured output.
 
@@ -58,6 +60,8 @@ class ClaudeRunner:
             max_turns: Max agentic turns (each turn = one model response).
             retry_on_timeout: Whether to retry on timeout. Set False for agents
                 that create files (retry could cause duplicates).
+            resume_session: Session ID to resume a previous conversation via
+                ``--resume``. Empty string means start a new session.
 
         Returns:
             RunOutput with text, num_turns, cost_usd, and timed_out.
@@ -73,6 +77,9 @@ class ClaudeRunner:
             "--system-prompt", system_prompt,
             "--max-turns", str(max_turns),
         ]
+
+        if resume_session:
+            cmd.extend(["--resume", resume_session])
 
         if allowed_tools:
             cmd.extend(["--allowedTools", ",".join(allowed_tools)])
@@ -105,7 +112,7 @@ class ClaudeRunner:
                     limit=10 * 1024 * 1024,  # 10 MB — stream-json lines can be very large
                 )
 
-                result_text, num_turns, cost_usd, timed_out = await _read_stream(
+                result_text, num_turns, cost_usd, timed_out, sess_id = await _read_stream(
                     proc, timeout
                 )
 
@@ -141,6 +148,7 @@ class ClaudeRunner:
                     text=result_text,
                     num_turns=num_turns,
                     cost_usd=cost_usd,
+                    session_id=sess_id,
                 )
 
             except (asyncio.CancelledError, KeyboardInterrupt):
@@ -157,15 +165,16 @@ class ClaudeRunner:
 async def _read_stream(
     proc: asyncio.subprocess.Process,
     timeout: int,
-) -> tuple[str, int, float, bool]:
+) -> tuple[str, int, float, bool, str]:
     """Read stream-json events from the subprocess stdout.
 
-    Returns (result_text, num_turns, cost_usd, timed_out).
+    Returns (result_text, num_turns, cost_usd, timed_out, session_id).
     """
     result_text = ""
     num_turns = 0
     cost_usd = 0.0
     last_assistant_text = ""
+    session_id = ""
 
     try:
         async with asyncio.timeout(timeout):
@@ -181,7 +190,11 @@ async def _read_stream(
 
                 etype = event.get("type")
 
-                if etype == "assistant":
+                if etype == "system" and event.get("subtype") == "init":
+                    session_id = event.get("session_id", "")
+                    logger.debug(f"[stream] session_id: {session_id}")
+
+                elif etype == "assistant":
                     # Track assistant text for fallback
                     msg = event.get("message", {})
                     for block in msg.get("content", []):
@@ -216,7 +229,7 @@ async def _read_stream(
             await asyncio.wait_for(proc.wait(), timeout=5)
         except (asyncio.TimeoutError, ProcessLookupError, OSError):
             pass
-        return last_assistant_text or result_text, num_turns, cost_usd, True
+        return last_assistant_text or result_text, num_turns, cost_usd, True, session_id
 
     # Drain remaining pipe data and ensure the process exits cleanly.
     # Without draining, the subprocess transport __del__ may raise
@@ -237,4 +250,4 @@ async def _read_stream(
     if not result_text and last_assistant_text:
         result_text = last_assistant_text
 
-    return result_text, num_turns, cost_usd, False
+    return result_text, num_turns, cost_usd, False, session_id

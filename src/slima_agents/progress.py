@@ -91,6 +91,21 @@ class ProgressEmitter:
     def file_created(self, path: str) -> None:
         self._emit("file_created", path=path)
 
+    # -- Plan lifecycle -------------------------------------------------------
+
+    def plan_ready(
+        self, plan_json: str, session_id: str, version: int = 1
+    ) -> None:
+        self._emit(
+            "plan_ready",
+            plan_json=plan_json,
+            session_id=session_id,
+            version=version,
+        )
+
+    def plan_approved(self, version: int = 1) -> None:
+        self._emit("plan_approved", version=version)
+
     # -- Errors --------------------------------------------------------------
 
     def error(self, message: str, stage: int | None = None, agent: str | None = None) -> None:
