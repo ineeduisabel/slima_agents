@@ -11,8 +11,10 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from ..agents.context import WorldContext
+from ..lang import detect_language, flatten_paths, format_structure_tree
 from ..progress import ProgressEmitter
 from ..slima.client import SlimaClient
+from ..tracker import PipelineTracker
 from .research import ResearchAgent
 from .validator import ValidationAgent
 from .specialists.cosmology import CosmologyAgent
@@ -27,24 +29,6 @@ from .specialists.bestiary import BestiaryAgent
 from .specialists.narrative import NarrativeAgent
 
 logger = logging.getLogger(__name__)
-
-
-def _detect_language(text: str) -> str:
-    """Detect prompt language. Returns 'ja', 'ko', 'zh', or 'en'.
-
-    Priority: Japanese kana → Korean Hangul → CJK ideographs (Chinese) → English.
-    """
-    for ch in text:
-        # Japanese: Hiragana (3040-309F) or Katakana (30A0-30FF)
-        if "\u3040" <= ch <= "\u309f" or "\u30a0" <= ch <= "\u30ff":
-            return "ja"
-        # Korean: Hangul Syllables (AC00-D7AF) or Hangul Jamo (1100-11FF)
-        if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff":
-            return "ko"
-    # CJK Unified Ideographs (shared by zh/ja/ko, but if no kana/hangul → zh)
-    if any("\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf" for ch in text):
-        return "zh"
-    return "en"
 
 
 # Localized path/label mappings
@@ -108,45 +92,6 @@ _LANG_PATHS = {
 }
 
 
-def _format_structure_tree(nodes: list[dict], prefix: str = "") -> str:
-    """Format a list of FileSnapshot dicts into a tree diagram (like `tree` command)."""
-    lines: list[str] = []
-    # Sort: folders first, then files; within each group sort by position
-    sorted_nodes = sorted(
-        nodes,
-        key=lambda n: (n.get("kind") != "folder", n.get("position", 0)),
-    )
-    for i, node in enumerate(sorted_nodes):
-        is_last = i == len(sorted_nodes) - 1
-        connector = "└── " if is_last else "├── "
-        name = node.get("name", "?")
-        kind = node.get("kind", "file")
-        if kind == "folder":
-            lines.append(f"{prefix}{connector}{name}/")
-            children = node.get("children") or []
-            if children:
-                extension = "    " if is_last else "│   "
-                lines.append(_format_structure_tree(children, prefix + extension))
-        else:
-            lines.append(f"{prefix}{connector}{name}")
-    return "\n".join(lines)
-
-
-def _flatten_paths(nodes: list[dict], prefix: str = "") -> list[str]:
-    """Recursively extract all file paths from a book structure tree."""
-    paths: list[str] = []
-    for node in nodes:
-        name = node.get("name", "")
-        kind = node.get("kind", "file")
-        children = node.get("children") or []
-        path = f"{prefix}{name}" if prefix else name
-        if kind == "folder" or children:
-            paths.extend(_flatten_paths(children, path + "/"))
-        else:
-            paths.append(path)
-    return paths
-
-
 class OrchestratorAgent:
     """協調完整的世界觀建構管線。"""
 
@@ -166,7 +111,7 @@ class OrchestratorAgent:
     async def run(self, prompt: str) -> str:
         """執行完整管線，回傳 book token。"""
         start = time.time()
-        lang = _detect_language(prompt)
+        lang = detect_language(prompt)
         L = _LANG_PATHS[lang]
         book_token = ""
 
@@ -230,6 +175,26 @@ class OrchestratorAgent:
             self.emitter.stage_complete(2, "book_creation", time.time() - stage_t0)
             self.console.print(f"  書籍已建立：[cyan]{book_token}[/cyan]  標題：[yellow]{book_title}[/yellow]")
 
+            # Initialize pipeline tracker (in-book progress.md)
+            tracker = PipelineTracker(
+                pipeline_name="worldbuild",
+                book_token=book_token,
+                prompt=prompt,
+                slima=self.slima,
+            )
+            tracker.define_stages([
+                (1, "research"), (2, "book_creation"), (3, "overview"),
+                (4, "foundation"), (5, "cultures"), (6, "power_structures"),
+                (7, "details"), (8, "narrative"), (9, "glossary"),
+                (10, "validation_r1"), (11, "validation_r2"), (12, "readme"),
+            ])
+            # Mark stages 1-2 as already completed (they ran before tracker init)
+            for sn in (1, 2):
+                rec = tracker._find(sn)
+                if rec:
+                    rec.status = "completed"
+            await tracker.start()
+
             agent_kwargs = dict(
                 context=self.context,
                 book_token=book_token,
@@ -237,6 +202,7 @@ class OrchestratorAgent:
             )
 
             # 步驟 3：建立總覽檔案
+            await tracker.stage_start(3)
             self.emitter.stage_start(3, "overview")
             stage_t0 = time.time()
             with _status(f"正在寫入 {L['overview_file']}...", self.console):
@@ -249,8 +215,10 @@ class OrchestratorAgent:
                 )
             self.emitter.file_created(L["overview_file"])
             self.emitter.stage_complete(3, "overview", time.time() - stage_t0)
+            await tracker.stage_complete(3)
 
             # 步驟 4：階段 2 — 宇宙觀 + 地理 + 歷史（平行）
+            await tracker.stage_start(4)
             await self._run_phase(
                 "階段 2：基礎",
                 [
@@ -261,8 +229,10 @@ class OrchestratorAgent:
                 stage=4, book_token=book_token,
             )
             await self._inject_book_structure(book_token)
+            await tracker.stage_complete(4)
 
             # 步驟 5：階段 3 — 種族 + 文化（平行）
+            await tracker.stage_start(5)
             await self._run_phase(
                 "階段 3：文化",
                 [
@@ -272,16 +242,20 @@ class OrchestratorAgent:
                 stage=5, book_token=book_token,
             )
             await self._inject_book_structure(book_token)
+            await tracker.stage_complete(5)
 
             # 步驟 6：階段 4 — 權力結構
+            await tracker.stage_start(6)
             await self._run_phase(
                 "階段 4：權力結構",
                 [("權力結構", PowerStructuresAgent(**agent_kwargs))],
                 stage=6, book_token=book_token,
             )
             await self._inject_book_structure(book_token)
+            await tracker.stage_complete(6)
 
             # 步驟 7：階段 5 — 角色 + 物品 + 怪獸圖鑑（平行）
+            await tracker.stage_start(7)
             await self._run_phase(
                 "階段 5：細節",
                 [
@@ -292,15 +266,19 @@ class OrchestratorAgent:
                 stage=7, book_token=book_token,
             )
             await self._inject_book_structure(book_token)
+            await tracker.stage_complete(7)
 
             # 步驟 8：階段 6 — 敘事
+            await tracker.stage_start(8)
             await self._run_phase(
                 "階段 6：敘事",
                 [("敘事", NarrativeAgent(**agent_kwargs))],
                 stage=8, book_token=book_token,
             )
+            await tracker.stage_complete(8)
 
             # 步驟 9：建立詞彙表
+            await tracker.stage_start(9)
             self.emitter.stage_start(9, "glossary")
             stage_t0 = time.time()
             with _status(f"正在寫入 {L['glossary_file']}...", self.console):
@@ -313,28 +291,34 @@ class OrchestratorAgent:
                 )
             self.emitter.file_created(L["glossary_file"])
             self.emitter.stage_complete(9, "glossary", time.time() - stage_t0)
+            await tracker.stage_complete(9)
 
             # 步驟 10：驗證（第一輪 — 一致性 + 內容完整度檢查 + 修復）
+            await tracker.stage_start(10)
             await self._run_phase(
                 "階段 7a：驗證",
                 [("驗證-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
                 stage=10, book_token=book_token,
             )
+            await tracker.stage_complete(10)
 
             # 步驟 11：驗證（第二輪 — 確認修復 + 最終報告）
+            await tracker.stage_start(11)
             await self._run_phase(
                 "階段 7b：確認",
                 [("驗證-R2", ValidationAgent(**agent_kwargs, validation_round=2))],
                 stage=11, book_token=book_token,
             )
+            await tracker.stage_complete(11)
 
             # 步驟 12：建立 README.md
+            await tracker.stage_start(12)
             self.emitter.stage_start(12, "readme")
             stage_t0 = time.time()
             with _status("正在建立 README.md...", self.console):
                 try:
                     structure = await self.slima.get_book_structure(book_token)
-                    tree_str = _format_structure_tree(structure)
+                    tree_str = format_structure_tree(structure)
                 except Exception:
                     tree_str = "(unable to retrieve)"
                 readme_content = self._build_readme(
@@ -351,6 +335,8 @@ class OrchestratorAgent:
                 )
             self.emitter.file_created("README.md")
             self.emitter.stage_complete(12, "readme", time.time() - stage_t0)
+            await tracker.stage_complete(12)
+            await tracker.complete()
 
             elapsed = time.time() - start
             self.emitter.pipeline_complete(book_token=book_token, total_duration_s=elapsed, success=True)
@@ -446,7 +432,7 @@ class OrchestratorAgent:
         """Get all file paths in the book for diffing."""
         try:
             structure = await self.slima.get_book_structure(book_token)
-            return set(_flatten_paths(structure))
+            return set(flatten_paths(structure))
         except Exception:
             return set()
 
@@ -458,7 +444,7 @@ class OrchestratorAgent:
         """
         try:
             structure = await self.slima.get_book_structure(book_token)
-            tree_str = _format_structure_tree(structure)
+            tree_str = format_structure_tree(structure)
             await self.context.write("book_structure", tree_str)
             logger.debug(f"Injected book structure ({len(tree_str)} chars)")
         except Exception as e:

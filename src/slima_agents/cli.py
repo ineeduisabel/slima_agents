@@ -11,6 +11,7 @@ import click
 from rich.console import Console
 
 from .config import DEFAULT_MODEL, Config, ConfigError
+from .mystery.orchestrator import MysteryOrchestratorAgent
 from .progress import ProgressEmitter
 from .slima.client import SlimaClient
 from .worldbuild.orchestrator import OrchestratorAgent
@@ -65,6 +66,50 @@ def worldbuild(prompt: str, model: str | None, json_progress: bool):
                 console=cli_console,
             )
             return await orch.run(prompt)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        raise SystemExit(130)
+
+
+@main.command()
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
+@click.option("--book", "-b", default=None, help="繼續寫作指定書籍（恢復模式）。")
+@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 進度事件到 stdout。")
+def mystery(prompt: str, model: str | None, book: str | None, json_progress: bool):
+    """從概念建構完整的懸疑推理小說。
+
+    \b
+    使用範例：
+      slima-agents mystery "一座維多利亞莊園的密室殺人事件"
+      slima-agents mystery --book bk_abc123 "繼續寫作"
+      slima-agents mystery "連環殺手在台北" --model claude-opus-4-6
+    """
+    if json_progress:
+        cli_console = Console(file=sys.stderr, no_color=True)
+    else:
+        cli_console = Console()
+
+    emitter = ProgressEmitter(enabled=json_progress)
+
+    try:
+        config = Config.load(model_override=model)
+    except ConfigError as e:
+        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        raise SystemExit(1)
+
+    async def _run():
+        async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
+            orch = MysteryOrchestratorAgent(
+                slima_client=slima,
+                model=config.model,
+                emitter=emitter,
+                console=cli_console,
+            )
+            return await orch.run(prompt, resume_book=book)
 
     try:
         asyncio.run(_run())

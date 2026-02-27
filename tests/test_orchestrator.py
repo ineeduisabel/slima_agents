@@ -12,11 +12,8 @@ from slima_agents.agents.base import AgentResult
 from slima_agents.progress import ProgressEmitter
 from slima_agents.slima.client import SlimaClient
 from slima_agents.slima.types import Book, Commit
-from slima_agents.worldbuild.orchestrator import (
-    OrchestratorAgent,
-    _detect_language,
-    _flatten_paths,
-)
+from slima_agents.lang import detect_language, flatten_paths
+from slima_agents.worldbuild.orchestrator import OrchestratorAgent
 
 
 @pytest.fixture
@@ -267,7 +264,7 @@ async def test_orchestrator_emits_json_progress(mock_slima):
 
 
 class TestFlattenPaths:
-    """Tests for _flatten_paths()."""
+    """Tests for flatten_paths()."""
 
     def test_simple_structure(self):
         nodes = [
@@ -276,7 +273,7 @@ class TestFlattenPaths:
             ]},
             {"name": "README.md", "kind": "file"},
         ]
-        paths = _flatten_paths(nodes)
+        paths = flatten_paths(nodes)
         assert set(paths) == {"meta/overview.md", "README.md"}
 
     def test_nested_folders(self):
@@ -289,7 +286,7 @@ class TestFlattenPaths:
                 {"name": "overview.md", "kind": "file"},
             ]},
         ]
-        paths = _flatten_paths(nodes)
+        paths = flatten_paths(nodes)
         assert set(paths) == {
             "worldview/cosmology/creation.md",
             "worldview/cosmology/magic.md",
@@ -297,30 +294,30 @@ class TestFlattenPaths:
         }
 
     def test_empty(self):
-        assert _flatten_paths([]) == []
+        assert flatten_paths([]) == []
 
 
 class TestDetectLanguage:
-    """Tests for _detect_language()."""
+    """Tests for detect_language()."""
 
     def test_chinese(self):
-        assert _detect_language("建構一個台灣鬼怪世界") == "zh"
+        assert detect_language("建構一個台灣鬼怪世界") == "zh"
 
     def test_japanese_hiragana(self):
-        assert _detect_language("ファンタジーの世界を作ってください") == "ja"
+        assert detect_language("ファンタジーの世界を作ってください") == "ja"
 
     def test_japanese_katakana(self):
-        assert _detect_language("ファンタジー世界") == "ja"
+        assert detect_language("ファンタジー世界") == "ja"
 
     def test_korean(self):
-        assert _detect_language("판타지 세계를 만들어주세요") == "ko"
+        assert detect_language("판타지 세계를 만들어주세요") == "ko"
 
     def test_english(self):
-        assert _detect_language("Build a fantasy world") == "en"
+        assert detect_language("Build a fantasy world") == "en"
 
     def test_mixed_cjk_no_kana_hangul(self):
         # CJK ideographs only (no kana/hangul) → zh
-        assert _detect_language("三國演義") == "zh"
+        assert detect_language("三國演義") == "zh"
 
     def test_empty(self):
-        assert _detect_language("") == "en"
+        assert detect_language("") == "en"
