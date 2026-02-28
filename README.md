@@ -121,6 +121,69 @@ BaseAgent.run()
   → AgentResult(summary, full_output, session_id)
 ```
 
+### Agent 一覽（25 個 Agent + 3 個 Orchestrator）
+
+#### Worldbuild Agent（12 個）
+
+| Agent | MCP 工具 | 階段 | 說明 |
+|-------|---------|------|------|
+| `ResearchAgent` | 無 | 1 | 純文字分析需求 + 生成書名 |
+| `CosmologyAgent` | write | 2 (平行) | 宇宙觀（物理法則、魔法體系） |
+| `GeographyAgent` | write | 2 (平行) | 地理（大陸、區域、地標） |
+| `HistoryAgent` | write | 2 (平行) | 歷史（年表、重大事件） |
+| `PeoplesAgent` | write | 3 (平行) | 種族/民族 |
+| `CulturesAgent` | write | 3 (平行) | 文化（習俗、藝術、信仰） |
+| `PowerStructuresAgent` | write | 4 | 權力結構（政治、經濟、軍事） |
+| `CharactersAgent` | write | 5 (平行) | 角色（15-25 個） |
+| `ItemsAgent` | write | 5 (平行) | 物品/神器 |
+| `BestiaryAgent` | write | 5 (平行) | 怪獸圖鑑 |
+| `NarrativeAgent` | write | 6 | 敘事（衝突、預言、故事線） |
+| `ValidationAgent` | write | 7 | R1+R2 一致性驗證（session chaining） |
+
+#### Mystery Agent（10 個）
+
+| Agent | MCP 工具 | 階段 | 說明 |
+|-------|---------|------|------|
+| `PlannerAgent` | 無 | 1 | 純文字分析犯罪概念 |
+| `CrimeDesignAgent` | write | 3 | 犯罪設計（手法、動機、時間線） |
+| `MysteryCharactersAgent` | write | 4 | 偵探+嫌疑犯+被害者 |
+| `PlotArchitectureAgent` | write | 5 | 章節大綱+線索配置 |
+| `SettingAgent` | write | 6 | 場景設定 |
+| `Act1WriterAgent` | write | 7 | 第一幕 (ch 1-4) |
+| `Act2WriterAgent` | write | 8 | 第二幕 (ch 5-8) |
+| `Act3WriterAgent` | write | 9 | 第三幕 (ch 9-12) |
+| `MysteryValidationAgent` | write | 10 | R1+R2 驗證（session chaining） |
+| `PolishAgent` | write | 11 | 索引+README |
+
+#### Plan-Driven Agent（2 個）
+
+| Agent | MCP 工具 | 說明 |
+|-------|---------|------|
+| `GenericPlannerAgent` | 有 source_book → all_read / 無 → 無 | 分析 prompt → PipelinePlan JSON + revise() |
+| `WriterAgent` | 動態（write / read / none） | 通用寫作 Agent，取代所有 specialist |
+
+#### 通用 Agent（1 個）
+
+| Agent | MCP 工具 | 說明 |
+|-------|---------|------|
+| `AskAgent` | all_read（可選 write） | 輕量快速提問 |
+
+#### Orchestrator（3 個，非 Agent）
+
+| Class | 管線 | 說明 |
+|-------|------|------|
+| `OrchestratorAgent` | Worldbuild | 12 階段平行+依序排程 |
+| `MysteryOrchestratorAgent` | Mystery | 11 階段依序 + 恢復模式 |
+| `GenericOrchestrator` | Plan-Driven | plan() / revise_plan() / execute() / run() |
+
+#### MCP 工具集
+
+| 工具集 | 包含工具 | 使用者 |
+|--------|---------|--------|
+| `SLIMA_MCP_TOOLS` | create_file, write_file, read_file, edit_file, get_book_structure, search_content | 所有 specialist + WriterAgent(write) |
+| `SLIMA_MCP_READ_TOOLS` | read_file, get_book_structure, search_content | WriterAgent(read) |
+| `SLIMA_MCP_ALL_READ_TOOLS` | list_books, get_book, get_book_structure, get_writing_stats, get_chapter, read_file, search_content | AskAgent、GenericPlannerAgent(source_book) |
+
 ### Worldbuild 管線
 
 ```

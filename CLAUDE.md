@@ -77,6 +77,69 @@ BaseAgent.run()
 每個 Agent 是一次 `claude -p` 呼叫。Claude CLI 自己處理 tool-use loop（最多 50 回合，受 `--max-turns` 限制）。
 ClaudeRunner 使用 `--output-format stream-json --verbose` 即時讀取事件流，收到 `{"type":"result"}` 立即返回，無需等待 timeout。
 
+### Agent 完整清單（25 個 Agent + 3 個 Orchestrator）
+
+#### Worldbuild Agent（12 個）
+
+| Agent | 檔案 | MCP | 階段 | 說明 |
+|-------|------|-----|------|------|
+| `ResearchAgent` | `worldbuild/research.py` | 無 | 1 | 純文字分析需求 + 生成書名 |
+| `CosmologyAgent` | `worldbuild/specialists/cosmology.py` | write | 2 (平行) | 宇宙觀 |
+| `GeographyAgent` | `worldbuild/specialists/geography.py` | write | 2 (平行) | 地理 |
+| `HistoryAgent` | `worldbuild/specialists/history.py` | write | 2 (平行) | 歷史 |
+| `PeoplesAgent` | `worldbuild/specialists/peoples.py` | write | 3 (平行) | 種族/民族 |
+| `CulturesAgent` | `worldbuild/specialists/cultures.py` | write | 3 (平行) | 文化 |
+| `PowerStructuresAgent` | `worldbuild/specialists/power_structures.py` | write | 4 | 權力結構 |
+| `CharactersAgent` | `worldbuild/specialists/characters.py` | write | 5 (平行) | 角色（15-25） |
+| `ItemsAgent` | `worldbuild/specialists/items.py` | write | 5 (平行) | 物品/神器 |
+| `BestiaryAgent` | `worldbuild/specialists/bestiary.py` | write | 5 (平行) | 怪獸圖鑑 |
+| `NarrativeAgent` | `worldbuild/specialists/narrative.py` | write | 6 | 敘事/故事線 |
+| `ValidationAgent` | `worldbuild/validator.py` | write | 7 | R1+R2 驗證（session chaining） |
+
+#### Mystery Agent（10 個）
+
+| Agent | 檔案 | MCP | 階段 | 說明 |
+|-------|------|-----|------|------|
+| `PlannerAgent` | `mystery/planner.py` | 無 | 1 | 純文字分析犯罪概念 |
+| `CrimeDesignAgent` | `mystery/specialists/crime_design.py` | write | 3 | 犯罪設計 |
+| `MysteryCharactersAgent` | `mystery/specialists/characters.py` | write | 4 | 偵探+嫌疑犯+被害者 |
+| `PlotArchitectureAgent` | `mystery/specialists/plot_architecture.py` | write | 5 | 章節大綱+線索配置 |
+| `SettingAgent` | `mystery/specialists/setting.py` | write | 6 | 場景設定 |
+| `Act1WriterAgent` | `mystery/specialists/act1_writer.py` | write | 7 | 第一幕 (ch 1-4) |
+| `Act2WriterAgent` | `mystery/specialists/act2_writer.py` | write | 8 | 第二幕 (ch 5-8) |
+| `Act3WriterAgent` | `mystery/specialists/act3_writer.py` | write | 9 | 第三幕 (ch 9-12) |
+| `MysteryValidationAgent` | `mystery/validator.py` | write | 10 | R1+R2 驗證（session chaining） |
+| `PolishAgent` | `mystery/specialists/polish.py` | write | 11 | 索引+README |
+
+#### Plan-Driven Agent（2 個）
+
+| Agent | 檔案 | MCP | 說明 |
+|-------|------|-----|------|
+| `GenericPlannerAgent` | `pipeline/planner.py` | source_book → all_read / 無 → 無 | prompt → PipelinePlan JSON + revise() |
+| `WriterAgent` | `pipeline/writer_agent.py` | 動態（write/read/none） | 通用寫作，1 class 取代所有 specialist |
+
+#### 通用 Agent（1 個）
+
+| Agent | 檔案 | MCP | 說明 |
+|-------|------|-----|------|
+| `AskAgent` | `agents/ask.py` | all_read（可選 write） | 輕量快速提問 |
+
+#### Orchestrator（3 個，非 BaseAgent 子類別）
+
+| Class | 檔案 | 管線 | 說明 |
+|-------|------|------|------|
+| `OrchestratorAgent` | `worldbuild/orchestrator.py` | Worldbuild | 12 階段平行+依序排程 |
+| `MysteryOrchestratorAgent` | `mystery/orchestrator.py` | Mystery | 11 階段依序 + 恢復模式 |
+| `GenericOrchestrator` | `pipeline/orchestrator.py` | Plan-Driven | plan() / revise_plan() / execute() / run() |
+
+#### MCP 工具集（`agents/tools.py`）
+
+| 工具集 | 包含工具 | 使用者 |
+|--------|---------|--------|
+| `SLIMA_MCP_TOOLS` | create_file, write_file, read_file, edit_file, get_book_structure, search_content | 所有 specialist + WriterAgent(write) |
+| `SLIMA_MCP_READ_TOOLS` | read_file, get_book_structure, search_content | WriterAgent(read) |
+| `SLIMA_MCP_ALL_READ_TOOLS` | list_books, get_book, get_book_structure, get_writing_stats, get_chapter, read_file, search_content | AskAgent、GenericPlannerAgent(source_book) |
+
 ### 共用基礎設施
 
 #### lang.py — 語言偵測與結構工具
