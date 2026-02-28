@@ -95,7 +95,7 @@ class BaseAgent(ABC):
         tools = self.allowed_tools()
         has_write = self._has_write_tools()
 
-        logger.info(f"[{self.name}] starting (tools: {len(tools)})")
+        logger.info(f"[{self.name}] Starting (tools: {len(tools)})")
 
         t0 = time.time()
         try:
@@ -110,7 +110,10 @@ class BaseAgent(ABC):
             )
             duration = time.time() - t0
 
-            logger.info(f"[{self.name}] finished ({len(output.text)} chars)")
+            logger.info(
+                f"[{self.name}] Done ({len(output.text)} chars, "
+                f"{output.num_turns} turns, ${output.cost_usd:.4f})"
+            )
 
             return AgentResult(
                 summary=output.text[:200],

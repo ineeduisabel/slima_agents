@@ -106,7 +106,7 @@ class MysteryOrchestratorAgent:
 
         self.emitter.pipeline_start(prompt=prompt, total_stages=11)
         self.console.print(
-            Panel(f"[bold]懸疑推理寫手 Agent[/bold]\n{prompt}", border_style="magenta")
+            Panel(f"[bold]Mystery Writer Agent[/bold]\n{prompt}", border_style="magenta")
         )
 
         self.context.user_prompt = prompt
@@ -118,13 +118,13 @@ class MysteryOrchestratorAgent:
                 if tracker:
                     resume_from = tracker.next_stage()
                     if resume_from == -1:
-                        self.console.print("  [green]所有階段已完成，無需繼續。[/green]")
+                        self.console.print("  [green]All stages completed.[/green]")
                         return resume_book
                     self.console.print(
-                        f"  [yellow]恢復模式：從階段 {resume_from} 繼續[/yellow]"
+                        f"  [yellow]Resume mode: continuing from stage {resume_from}[/yellow]"
                     )
                 else:
-                    self.console.print("  [yellow]找不到進度記錄，從頭開始[/yellow]")
+                    self.console.print("  [yellow]No progress found, starting fresh[/yellow]")
                     resume_from = 1
 
                 # Restore context from book
@@ -144,14 +144,14 @@ class MysteryOrchestratorAgent:
                     console=self.console,
                 ) as progress:
                     task_id = progress.add_task(
-                        "[階段 1] 企劃 Agent 正在分析提示詞...", total=None
+                        "[Stage 1] PlannerAgent analyzing prompt...", total=None
                     )
                     self.emitter.agent_start(1, "PlannerAgent")
                     result = await planner.run()
                     if not result.full_output.strip():
                         progress.update(
                             task_id,
-                            description="[階段 1] 企劃 Agent [yellow]重試中[/yellow]...",
+                            description="[Stage 1] PlannerAgent [yellow]retrying[/yellow]...",
                         )
                         result = await planner.run()
 
@@ -165,7 +165,7 @@ class MysteryOrchestratorAgent:
                     cost_usd=result.cost_usd,
                 )
                 self.emitter.stage_complete(1, "planning", time.time() - stage_t0)
-                self.console.print(f"  [green]企劃完成：[/green] {result.summary[:80]}")
+                self.console.print(f"  [green]Planning done:[/green] {result.summary[:80]}")
             else:
                 planner = PlannerAgent(
                     context=self.context, model=self.model, prompt=prompt
@@ -179,7 +179,7 @@ class MysteryOrchestratorAgent:
                 book_description = planner.suggested_description or prompt[:200]
 
                 if not book_token:
-                    with _status("正在建立 Slima 書籍...", self.console):
+                    with _status("Creating Slima book...", self.console):
                         book = await self.slima.create_book(
                             title=book_title,
                             description=book_description,
@@ -187,13 +187,13 @@ class MysteryOrchestratorAgent:
                     book_token = book.token
                     self.emitter.book_created(book_token, book_title, book_description)
                     self.console.print(
-                        f"  書籍已建立：[cyan]{book_token}[/cyan]  "
-                        f"標題：[yellow]{book_title}[/yellow]"
+                        f"  Book created: [cyan]{book_token}[/cyan]  "
+                        f"Title: [yellow]{book_title}[/yellow]"
                     )
 
                 # Write concept overview
                 overview_text = self.context.serialize_for_prompt()
-                with _status(f"正在寫入 {L['overview_file']}...", self.console):
+                with _status(f"Writing {L['overview_file']}...", self.console):
                     await self.slima.create_file(
                         book_token,
                         path=L["overview_file"],
@@ -233,7 +233,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 3:
                 await tracker.stage_start(3)
                 await self._run_stage(
-                    3, "犯罪設計", CrimeDesignAgent(**agent_kwargs), book_token
+                    3, "Crime Design", CrimeDesignAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(3)
@@ -243,7 +243,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 4:
                 await tracker.stage_start(4)
                 await self._run_stage(
-                    4, "角色設計", MysteryCharactersAgent(**agent_kwargs), book_token
+                    4, "Characters", MysteryCharactersAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(4)
@@ -253,7 +253,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 5:
                 await tracker.stage_start(5)
                 await self._run_stage(
-                    5, "情節架構", PlotArchitectureAgent(**agent_kwargs), book_token
+                    5, "Plot Architecture", PlotArchitectureAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(5)
@@ -263,7 +263,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 6:
                 await tracker.stage_start(6)
                 await self._run_stage(
-                    6, "場景設定", SettingAgent(**agent_kwargs), book_token
+                    6, "Setting", SettingAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await tracker.stage_complete(6)
@@ -273,7 +273,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 7:
                 await tracker.stage_start(7)
                 await self._run_stage(
-                    7, "第一幕寫作", Act1WriterAgent(**agent_kwargs), book_token
+                    7, "Act 1 Writing", Act1WriterAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await self._summarize_chapters(book_token, "act1_summary", L)
@@ -284,7 +284,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 8:
                 await tracker.stage_start(8)
                 await self._run_stage(
-                    8, "第二幕寫作", Act2WriterAgent(**agent_kwargs), book_token
+                    8, "Act 2 Writing", Act2WriterAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await self._summarize_chapters(book_token, "act2_summary", L)
@@ -295,7 +295,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 9:
                 await tracker.stage_start(9)
                 await self._run_stage(
-                    9, "第三幕寫作", Act3WriterAgent(**agent_kwargs), book_token
+                    9, "Act 3 Writing", Act3WriterAgent(**agent_kwargs), book_token
                 )
                 await self._inject_book_structure(book_token)
                 await self._summarize_chapters(book_token, "act3_summary", L)
@@ -307,13 +307,13 @@ class MysteryOrchestratorAgent:
             if resume_from <= 10:
                 await tracker.stage_start(10)
                 r1_result = await self._run_stage(
-                    10, "驗證-R1",
+                    10, "Validation-R1",
                     MysteryValidationAgent(**agent_kwargs, validation_round=1),
                     book_token,
                 )
                 r1_session_id = r1_result.session_id if r1_result else ""
                 await self._run_stage(
-                    10, "驗證-R2",
+                    10, "Validation-R2",
                     MysteryValidationAgent(
                         **agent_kwargs, validation_round=2,
                         resume_session=r1_session_id,
@@ -326,7 +326,7 @@ class MysteryOrchestratorAgent:
             if resume_from <= 11:
                 await tracker.stage_start(11)
                 await self._run_stage(
-                    11, "潤色收尾", PolishAgent(**agent_kwargs), book_token
+                    11, "Polish", PolishAgent(**agent_kwargs), book_token
                 )
                 await tracker.stage_complete(11)
 
@@ -340,10 +340,10 @@ class MysteryOrchestratorAgent:
             self.console.print()
             self.console.print(
                 Panel(
-                    f"[bold green]懸疑推理小說完成！[/bold green]\n\n"
-                    f"書籍 Token：[cyan]{book_token}[/cyan]\n"
-                    f"耗時：{elapsed:.0f} 秒\n\n"
-                    f"在此查看：{self.slima._base_url}/books/{book_token}",
+                    f"[bold green]Mystery novel complete![/bold green]\n\n"
+                    f"Book Token: [cyan]{book_token}[/cyan]\n"
+                    f"Duration: {elapsed:.0f}s\n\n"
+                    f"View: {self.slima._base_url}/books/{book_token}",
                     border_style="green",
                 )
             )
@@ -376,7 +376,7 @@ class MysteryOrchestratorAgent:
             TimeElapsedColumn(),
             console=self.console,
         ) as progress:
-            task_id = progress.add_task(f"[階段 {stage}] {name}...", total=None)
+            task_id = progress.add_task(f"[Stage {stage}] {name}...", total=None)
             self.emitter.agent_start(stage, agent.name)
             try:
                 result = await agent.run()
@@ -389,20 +389,20 @@ class MysteryOrchestratorAgent:
                 if result.timed_out:
                     progress.update(
                         task_id,
-                        description=f"[階段 {stage}] {name} [yellow]部分完成[/yellow]",
+                        description=f"[Stage {stage}] {name} [yellow]partial[/yellow]",
                     )
                 else:
                     progress.update(
                         task_id,
-                        description=f"[階段 {stage}] {name} [green]完成[/green]",
+                        description=f"[Stage {stage}] {name} [green]done[/green]",
                     )
             except Exception as e:
                 self.emitter.error(str(e), stage=stage, agent=agent.name)
                 progress.update(
                     task_id,
-                    description=f"[階段 {stage}] {name} [red]失敗[/red]",
+                    description=f"[Stage {stage}] {name} [red]failed[/red]",
                 )
-                logger.error(f"{name} 失敗：{e}")
+                logger.error(f"{name} failed: {e}")
                 raise
 
         # Snapshot AFTER and emit new files
@@ -415,10 +415,10 @@ class MysteryOrchestratorAgent:
 
         if result.timed_out:
             self.console.print(
-                f"  [yellow]{name}：[/yellow] 超時但檔案已建立（部分完成），繼續下一階段"
+                f"  [yellow]{name}:[/yellow] timed out but files saved (partial)"
             )
         else:
-            self.console.print(f"  [green]{name}：[/green] {result.summary[:80]}")
+            self.console.print(f"  [green]{name}:[/green] {result.summary[:80]}")
 
         return result
 

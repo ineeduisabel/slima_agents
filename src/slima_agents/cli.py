@@ -24,7 +24,8 @@ def main(verbose: bool):
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        format="%(asctime)s %(levelname)-5s %(message)s",
+        datefmt="%H:%M:%S",
         handlers=[logging.StreamHandler(sys.stderr)],
     )
 
@@ -54,7 +55,7 @@ def worldbuild(prompt: str, model: str | None, json_progress: bool):
     try:
         config = Config.load(model_override=model)
     except ConfigError as e:
-        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
     async def _run():
@@ -70,7 +71,7 @@ def worldbuild(prompt: str, model: str | None, json_progress: bool):
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
         raise SystemExit(130)
 
 
@@ -98,7 +99,7 @@ def mystery(prompt: str, model: str | None, book: str | None, json_progress: boo
     try:
         config = Config.load(model_override=model)
     except ConfigError as e:
-        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
     async def _run():
@@ -114,7 +115,7 @@ def mystery(prompt: str, model: str | None, book: str | None, json_progress: boo
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
         raise SystemExit(130)
 
 
@@ -193,10 +194,10 @@ def ask(
 
         sys.stdout.buffer.flush()
     except KeyboardInterrupt:
-        console.print("\n[yellow]已取消。[/yellow]")
+        console.print("\n[yellow]Cancelled.[/yellow]")
         raise SystemExit(130)
     except Exception as e:
-        console.print(f"[red]錯誤：[/red] {e}")
+        console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
 
 
@@ -228,7 +229,7 @@ def write(prompt: str, model: str | None, book: str | None, source_book: str | N
     try:
         config = Config.load(model_override=model)
     except ConfigError as e:
-        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
     # Load external plan if provided
@@ -242,7 +243,7 @@ def write(prompt: str, model: str | None, book: str | None, source_book: str | N
             external_plan = PipelinePlan.model_validate(data)
             cli_console.print(f"  [green]Loaded plan from:[/green] {plan_file}")
         except Exception as e:
-            cli_console.print(f"[red]Plan 檔案錯誤：[/red] {e}")
+            cli_console.print(f"[red]Plan file error:[/red] {e}")
             raise SystemExit(1)
 
     async def _run():
@@ -264,7 +265,7 @@ def write(prompt: str, model: str | None, book: str | None, source_book: str | N
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
         raise SystemExit(130)
 
 
@@ -286,7 +287,7 @@ def plan(prompt: str, model: str | None, book: str | None):
     try:
         config = Config.load(model_override=model)
     except ConfigError as e:
-        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
     async def _run():
@@ -318,12 +319,12 @@ def plan(prompt: str, model: str | None, book: str | None):
         sys.stdout.buffer.write(b"\n")
         sys.stdout.buffer.flush()
     except KeyboardInterrupt:
-        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
         raise SystemExit(130)
     except SystemExit:
         raise
     except Exception as e:
-        cli_console.print(f"[red]錯誤：[/red] {e}")
+        cli_console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
 
 
@@ -346,7 +347,7 @@ def plan_loop(prompt: str, model: str | None, book: str | None):
     try:
         config = Config.load(model_override=model)
     except ConfigError as e:
-        cli_console.print(f"[red]設定錯誤：[/red] {e}")
+        cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
     async def _run():
@@ -416,12 +417,12 @@ def plan_loop(prompt: str, model: str | None, book: str | None):
         sys.stdout.buffer.write(b"\n")
         sys.stdout.buffer.flush()
     except KeyboardInterrupt:
-        cli_console.print("\n[yellow]已取消。[/yellow] (Ctrl+C)")
+        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
         raise SystemExit(130)
     except SystemExit:
         raise
     except Exception as e:
-        cli_console.print(f"[red]錯誤：[/red] {e}")
+        cli_console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
 
 
@@ -431,22 +432,22 @@ def status():
     console = Console()
     try:
         config = Config.load()
-        console.print(f"[green]Slima Token：[/green] ...{config.slima_api_token[-8:]}")
-        console.print(f"[green]Slima URL：[/green] {config.slima_base_url}")
-        console.print(f"[green]模型：[/green] {config.model}")
+        console.print(f"[green]Slima Token:[/green] ...{config.slima_api_token[-8:]}")
+        console.print(f"[green]Slima URL:[/green] {config.slima_base_url}")
+        console.print(f"[green]Model:[/green] {config.model}")
 
         async def _check():
             async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
                 books = await slima.list_books()
-                console.print(f"[green]Slima API：[/green] 連線正常（{len(books)} 本書）")
+                console.print(f"[green]Slima API:[/green] OK ({len(books)} books)")
 
         asyncio.run(_check())
 
     except ConfigError as e:
-        console.print(f"[red]設定錯誤：[/red] {e}")
+        console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
     except Exception as e:
-        console.print(f"[red]連線錯誤：[/red] {e}")
+        console.print(f"[red]Connection error:[/red] {e}")
         raise SystemExit(1)
 
 

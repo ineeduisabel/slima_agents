@@ -1,4 +1,4 @@
-"""OrchestratorAgent：分階段管線協調器。"""
+"""OrchestratorAgent: phased pipeline orchestrator."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ _LANG_PATHS = {
 
 
 class OrchestratorAgent:
-    """協調完整的世界觀建構管線。"""
+    """Orchestrate the complete worldbuild pipeline."""
 
     def __init__(
         self,
@@ -111,20 +111,20 @@ class OrchestratorAgent:
         self.console = console or Console()
 
     async def run(self, prompt: str) -> str:
-        """執行完整管線，回傳 book token。"""
+        """Execute the full pipeline. Returns book token."""
         start = time.time()
         lang = detect_language(prompt)
         L = _LANG_PATHS[lang]
         book_token = ""
 
         self.emitter.pipeline_start(prompt=prompt, total_stages=12)
-        self.console.print(Panel(f"[bold]世界觀建構 Agent[/bold]\n{prompt}", border_style="blue"))
+        self.console.print(Panel(f"[bold]Worldbuild Agent[/bold]\n{prompt}", border_style="blue"))
 
-        # 將使用者原始需求存入 WorldContext，確保所有 Agent 都知道要建構什麼
+        # Store original prompt in WorldContext so all agents know the goal
         self.context.user_prompt = prompt
 
         try:
-            # 步驟 1：研究（不需要書籍，先產出世界觀內容和標題）
+            # Step 1: Research (no book needed; produces world content + title)
             self.emitter.stage_start(1, "research", ["ResearchAgent"])
             stage_t0 = time.time()
             research = ResearchAgent(context=self.context, model=self.model, prompt=prompt)
@@ -134,16 +134,16 @@ class OrchestratorAgent:
                 TimeElapsedColumn(),
                 console=self.console,
             ) as progress:
-                task_id = progress.add_task("[階段 1] 研究 Agent 正在分析提示詞...", total=None)
+                task_id = progress.add_task("[Stage 1] ResearchAgent analyzing prompt...", total=None)
                 self.emitter.agent_start(1, "ResearchAgent")
                 result = await research.run()
                 if not result.full_output.strip():
-                    progress.update(task_id, description="[階段 1] 研究 Agent [yellow]重試中[/yellow]...")
+                    progress.update(task_id, description="[Stage 1] ResearchAgent [yellow]retrying[/yellow]...")
                     result = await research.run()
 
             if not result.full_output.strip():
                 self.console.print(
-                    "  [red]研究 Agent 連續兩次回傳空白。請檢查 Claude CLI 是否正常運作：[/red]\n"
+                    "  [red]ResearchAgent returned empty output twice. Check Claude CLI:[/red]\n"
                     "  [dim]  claude -p \"hello\" --output-format text[/dim]"
                 )
                 raise RuntimeError("ResearchAgent returned empty output after retry")
@@ -157,17 +157,17 @@ class OrchestratorAgent:
 
             overview_text = self.context.serialize_for_prompt()
             if overview_text == "(No world context populated yet.)":
-                self.console.print("  [yellow]警告：研究 Agent 有輸出但解析失敗，WorldContext 為空[/yellow]")
+                self.console.print("  [yellow]Warning: ResearchAgent produced output but parsing failed, WorldContext is empty[/yellow]")
                 logger.warning(f"Research output (first 500 chars): {result.full_output[:500]}")
 
-            self.console.print(f"  [green]研究完成：[/green] {result.summary[:80]}")
+            self.console.print(f"  [green]Research done:[/green] {result.summary[:80]}")
 
-            # 步驟 2：用研究 Agent 產出的標題和描述建立 Slima 書籍
+            # Step 2: Create Slima book with title/description from ResearchAgent
             self.emitter.stage_start(2, "book_creation")
             stage_t0 = time.time()
             book_title = research.suggested_title or prompt[:60]
             book_description = research.suggested_description or prompt[:200]
-            with _status("正在建立 Slima 書籍...", self.console):
+            with _status("Creating Slima book...", self.console):
                 book = await self.slima.create_book(
                     title=book_title,
                     description=book_description,
@@ -175,7 +175,7 @@ class OrchestratorAgent:
             book_token = book.token
             self.emitter.book_created(book_token, book_title, book_description)
             self.emitter.stage_complete(2, "book_creation", time.time() - stage_t0)
-            self.console.print(f"  書籍已建立：[cyan]{book_token}[/cyan]  標題：[yellow]{book_title}[/yellow]")
+            self.console.print(f"  Book created: [cyan]{book_token}[/cyan]  Title: [yellow]{book_title}[/yellow]")
 
             # Initialize pipeline tracker (in-book progress.md)
             tracker = PipelineTracker(
@@ -203,11 +203,11 @@ class OrchestratorAgent:
                 model=self.model,
             )
 
-            # 步驟 3：建立總覽檔案
+            # Step 3: Write overview file
             await tracker.stage_start(3)
             self.emitter.stage_start(3, "overview")
             stage_t0 = time.time()
-            with _status(f"正在寫入 {L['overview_file']}...", self.console):
+            with _status(f"Writing {L['overview_file']}...", self.console):
                 overview = self.context.serialize_for_prompt()
                 await self.slima.create_file(
                     book_token,
@@ -219,14 +219,14 @@ class OrchestratorAgent:
             self.emitter.stage_complete(3, "overview", time.time() - stage_t0)
             await tracker.stage_complete(3)
 
-            # 步驟 4：階段 2 — 宇宙觀 + 地理 + 歷史（平行）
+            # Step 4: Phase 2 — Cosmology + Geography + History (parallel)
             await tracker.stage_start(4)
             await self._run_phase(
-                "階段 2：基礎",
+                "Stage 2: Foundation",
                 [
-                    ("宇宙觀", CosmologyAgent(**agent_kwargs)),
-                    ("地理", GeographyAgent(**agent_kwargs)),
-                    ("歷史", HistoryAgent(**agent_kwargs)),
+                    ("Cosmology", CosmologyAgent(**agent_kwargs)),
+                    ("Geography", GeographyAgent(**agent_kwargs)),
+                    ("History", HistoryAgent(**agent_kwargs)),
                 ],
                 stage=4, book_token=book_token,
             )
@@ -234,13 +234,13 @@ class OrchestratorAgent:
             await tracker.stage_complete(4)
             await self._save_context_snapshot(book_token)
 
-            # 步驟 5：階段 3 — 種族 + 文化（平行）
+            # Step 5: Phase 3 — Peoples + Cultures (parallel)
             await tracker.stage_start(5)
             await self._run_phase(
-                "階段 3：文化",
+                "Stage 3: Cultures",
                 [
-                    ("種族", PeoplesAgent(**agent_kwargs)),
-                    ("文化", CulturesAgent(**agent_kwargs)),
+                    ("Peoples", PeoplesAgent(**agent_kwargs)),
+                    ("Cultures", CulturesAgent(**agent_kwargs)),
                 ],
                 stage=5, book_token=book_token,
             )
@@ -248,25 +248,25 @@ class OrchestratorAgent:
             await tracker.stage_complete(5)
             await self._save_context_snapshot(book_token)
 
-            # 步驟 6：階段 4 — 權力結構
+            # Step 6: Phase 4 — Power Structures
             await tracker.stage_start(6)
             await self._run_phase(
-                "階段 4：權力結構",
-                [("權力結構", PowerStructuresAgent(**agent_kwargs))],
+                "Stage 4: Power Structures",
+                [("PowerStructures", PowerStructuresAgent(**agent_kwargs))],
                 stage=6, book_token=book_token,
             )
             await self._inject_book_structure(book_token)
             await tracker.stage_complete(6)
             await self._save_context_snapshot(book_token)
 
-            # 步驟 7：階段 5 — 角色 + 物品 + 怪獸圖鑑（平行）
+            # Step 7: Phase 5 — Characters + Items + Bestiary (parallel)
             await tracker.stage_start(7)
             await self._run_phase(
-                "階段 5：細節",
+                "Stage 5: Details",
                 [
-                    ("角色", CharactersAgent(**agent_kwargs)),
-                    ("物品", ItemsAgent(**agent_kwargs)),
-                    ("怪獸圖鑑", BestiaryAgent(**agent_kwargs)),
+                    ("Characters", CharactersAgent(**agent_kwargs)),
+                    ("Items", ItemsAgent(**agent_kwargs)),
+                    ("Bestiary", BestiaryAgent(**agent_kwargs)),
                 ],
                 stage=7, book_token=book_token,
             )
@@ -274,21 +274,21 @@ class OrchestratorAgent:
             await tracker.stage_complete(7)
             await self._save_context_snapshot(book_token)
 
-            # 步驟 8：階段 6 — 敘事
+            # Step 8: Phase 6 — Narrative
             await tracker.stage_start(8)
             await self._run_phase(
-                "階段 6：敘事",
-                [("敘事", NarrativeAgent(**agent_kwargs))],
+                "Stage 6: Narrative",
+                [("Narrative", NarrativeAgent(**agent_kwargs))],
                 stage=8, book_token=book_token,
             )
             await tracker.stage_complete(8)
             await self._save_context_snapshot(book_token)
 
-            # 步驟 9：建立詞彙表
+            # Step 9: Build glossary
             await tracker.stage_start(9)
             self.emitter.stage_start(9, "glossary")
             stage_t0 = time.time()
-            with _status(f"正在寫入 {L['glossary_file']}...", self.console):
+            with _status(f"Writing {L['glossary_file']}...", self.console):
                 glossary_content = self._build_glossary(L)
                 await self.slima.create_file(
                     book_token,
@@ -300,22 +300,22 @@ class OrchestratorAgent:
             self.emitter.stage_complete(9, "glossary", time.time() - stage_t0)
             await tracker.stage_complete(9)
 
-            # 步驟 10：驗證（第一輪 — 一致性 + 內容完整度檢查 + 修復）
+            # Step 10: Validation R1 — consistency + completeness check + fixes
             await tracker.stage_start(10)
             r1_result = await self._run_phase(
-                "階段 7a：驗證",
-                [("驗證-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
+                "Stage 7a: Validation",
+                [("Validation-R1", ValidationAgent(**agent_kwargs, validation_round=1))],
                 stage=10, book_token=book_token,
             )
             await tracker.stage_complete(10)
 
-            # 步驟 11：驗證（第二輪 — 確認修復 + 最終報告）
+            # Step 11: Validation R2 — verify fixes + final report
             # Chain R2 onto R1's session so R2 doesn't need to re-read all files.
             r1_session_id = r1_result[0].session_id if r1_result else ""
             await tracker.stage_start(11)
             await self._run_phase(
-                "階段 7b：確認",
-                [("驗證-R2", ValidationAgent(
+                "Stage 7b: Verify",
+                [("Validation-R2", ValidationAgent(
                     **agent_kwargs, validation_round=2,
                     resume_session=r1_session_id,
                 ))],
@@ -323,11 +323,11 @@ class OrchestratorAgent:
             )
             await tracker.stage_complete(11)
 
-            # 步驟 12：建立 README.md
+            # Step 12: Create README.md
             await tracker.stage_start(12)
             self.emitter.stage_start(12, "readme")
             stage_t0 = time.time()
-            with _status("正在建立 README.md...", self.console):
+            with _status("Creating README.md...", self.console):
                 try:
                     structure = await self.slima.get_book_structure(book_token)
                     tree_str = format_structure_tree(structure)
@@ -356,10 +356,10 @@ class OrchestratorAgent:
             self.console.print()
             self.console.print(
                 Panel(
-                    f"[bold green]世界觀聖經建構完成！[/bold green]\n\n"
-                    f"書籍 Token：[cyan]{book_token}[/cyan]\n"
-                    f"耗時：{elapsed:.0f} 秒\n\n"
-                    f"在此查看：{self.slima._base_url}/books/{book_token}",
+                    f"[bold green]Worldbuild complete![/bold green]\n\n"
+                    f"Book: [cyan]{book_token}[/cyan]\n"
+                    f"Duration: {elapsed:.0f}s\n\n"
+                    f"View: {self.slima._base_url}/books/{book_token}",
                     border_style="green",
                 )
             )
@@ -376,7 +376,7 @@ class OrchestratorAgent:
         self, phase_name: str, agents: list[tuple[str, object]],
         *, stage: int = 0, book_token: str = "",
     ) -> list[AgentResult]:
-        """以平行方式執行一組 Agent，並顯示進度。回傳成功的 AgentResult 列表。"""
+        """Run a group of agents in parallel with progress display. Returns list of AgentResults."""
         agent_names = [name for name, _ in agents]
         self.emitter.stage_start(stage, phase_name, agent_names)
         stage_t0 = time.time()
@@ -407,14 +407,14 @@ class OrchestratorAgent:
                         cost_usd=result.cost_usd,
                     )
                     if result.timed_out:
-                        progress.update(tasks[name], description=f"[{phase_name}] {name} [yellow]部分完成[/yellow]")
+                        progress.update(tasks[name], description=f"[{phase_name}] {name} [yellow]partial[/yellow]")
                     else:
-                        progress.update(tasks[name], description=f"[{phase_name}] {name} [green]完成[/green]")
+                        progress.update(tasks[name], description=f"[{phase_name}] {name} [green]done[/green]")
                     return name, result
                 except Exception as e:
                     self.emitter.error(str(e), stage=stage, agent=name)
-                    progress.update(tasks[name], description=f"[{phase_name}] {name} [red]失敗[/red]")
-                    logger.error(f"{name} 失敗：{e}")
+                    progress.update(tasks[name], description=f"[{phase_name}] {name} [red]failed[/red]")
+                    logger.error(f"{name} failed: {e}")
                     raise
 
             results = await asyncio.gather(
@@ -433,14 +433,14 @@ class OrchestratorAgent:
         agent_results = []
         for r in results:
             if isinstance(r, Exception):
-                self.console.print(f"  [red]錯誤：[/red] {r}")
+                self.console.print(f"  [red]Error:[/red] {r}")
             else:
                 name, result = r
                 agent_results.append(result)
                 if result.timed_out:
-                    self.console.print(f"  [yellow]{name}：[/yellow] 超時但檔案已建立（部分完成），繼續下一階段")
+                    self.console.print(f"  [yellow]{name}:[/yellow] timed out but files saved (partial)")
                 else:
-                    self.console.print(f"  [green]{name}：[/green] {result.summary[:80]}")
+                    self.console.print(f"  [green]{name}:[/green] {result.summary[:80]}")
 
         return agent_results
 
@@ -540,7 +540,7 @@ class OrchestratorAgent:
         )
 
     def _build_glossary(self, L: dict) -> str:
-        """從 context 建構詞彙表。"""
+        """Build glossary content from context."""
         return (
             f"{L['glossary_title']}\n\n"
             f"{L['glossary_intro']}\n\n"
@@ -549,7 +549,7 @@ class OrchestratorAgent:
 
 
 class _status:
-    """簡易 context manager，印出狀態訊息。"""
+    """Simple context manager for status messages."""
 
     def __init__(self, msg: str, console: Console | None = None):
         self.msg = msg

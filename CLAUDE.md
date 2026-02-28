@@ -3,7 +3,7 @@
 ## 快速指令
 
 ```bash
-uv run pytest                                          # 執行測試（227 tests）
+uv run pytest                                          # 執行測試（353 tests）
 uv run slima-agents status                             # 檢查 API 連線
 uv run slima-agents worldbuild "需求描述"               # 建構世界觀
 uv run slima-agents mystery "密室殺人事件"              # 建構懸疑推理小說
@@ -362,7 +362,7 @@ claude -p <prompt> --verbose --output-format stream-json \
 ## 測試
 
 ```bash
-uv run pytest -v                                       # 全部 227 tests
+uv run pytest -v                                       # 全部 353 tests
 uv run pytest tests/test_base_agent.py -v              # Agent 單元測試
 uv run pytest tests/test_orchestrator.py -v            # Worldbuild orchestrator 整合測試
 uv run pytest tests/test_lang.py -v                    # 語言偵測 + 結構工具測試
@@ -379,6 +379,9 @@ uv run pytest tests/test_generic_planner.py -v         # GenericPlannerAgent 測
 uv run pytest tests/test_generic_orchestrator.py -v    # GenericOrchestrator 整合測試
 uv run pytest tests/test_planner_upgrade.py -v         # PlannerAgent 升級測試（source_book + revise）
 uv run pytest tests/test_orchestrator_split.py -v      # Orchestrator split 測試（plan/revise/execute）
+uv run pytest tests/test_config.py -v                  # Config 載入 + 優先序測試
+uv run pytest tests/test_cli.py -v                     # CLI 指令測試（Click）
+uv run pytest tests/test_specialists.py -v             # 全部 21 Specialist Agent 測試
 ```
 
 所有 Agent 測試透過 mock `ClaudeRunner` 執行。Orchestrator 測試 mock 所有 Agent + SlimaClient。
