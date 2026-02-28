@@ -84,3 +84,79 @@ def test_ask_agent_initial_message():
     """initial_message should return the prompt as-is."""
     agent = AskAgent(context=WorldContext(), prompt="搜尋所有提到龍的段落")
     assert agent.initial_message() == "搜尋所有提到龍的段落"
+
+
+# ---------- custom_system_prompt ----------
+
+
+def test_ask_agent_custom_system_prompt():
+    """custom_system_prompt should be appended to the default system prompt."""
+    agent = AskAgent(
+        context=WorldContext(),
+        prompt="test",
+        custom_system_prompt="You are a pirate. Always speak like a pirate.",
+    )
+    sp = agent.system_prompt()
+    assert "You are a pirate" in sp
+    # Default instructions should still be present
+    assert "Slima book management tools" in sp
+
+
+def test_ask_agent_no_custom_system_prompt():
+    """Without custom_system_prompt, system prompt should not have extra content."""
+    agent = AskAgent(context=WorldContext(), prompt="test")
+    sp = agent.system_prompt()
+    assert "Slima book management tools" in sp
+    # Should be just the defaults
+    lines = sp.strip().split("\n")
+    assert len([l for l in lines if l.strip()]) <= 4  # 3 default lines + optional book
+
+
+def test_ask_agent_custom_system_prompt_with_book():
+    """custom_system_prompt + book_token should both appear in system prompt."""
+    agent = AskAgent(
+        context=WorldContext(),
+        prompt="test",
+        book_token="bk_xyz",
+        custom_system_prompt="Focus on character analysis.",
+    )
+    sp = agent.system_prompt()
+    assert "bk_xyz" in sp
+    assert "Focus on character analysis" in sp
+
+
+# ---------- resume_session ----------
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_resume_session():
+    """AskAgent should pass resume_session to ClaudeRunner."""
+    with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
+        MockRunner.run = AsyncMock(
+            return_value=RunOutput(text="Continued.", session_id="sess_002")
+        )
+
+        agent = AskAgent(
+            context=WorldContext(),
+            prompt="繼續上次的話題",
+            resume_session="sess_001",
+        )
+        result = await agent.run()
+
+        call_kwargs = MockRunner.run.call_args
+        assert call_kwargs.kwargs.get("resume_session") == "sess_001"
+        assert result.session_id == "sess_002"
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_returns_session_id():
+    """AskAgent result should carry session_id from ClaudeRunner."""
+    with patch("slima_agents.agents.base.ClaudeRunner") as MockRunner:
+        MockRunner.run = AsyncMock(
+            return_value=RunOutput(text="Hello!", session_id="sess_abc123")
+        )
+
+        agent = AskAgent(context=WorldContext(), prompt="你好")
+        result = await agent.run()
+
+        assert result.session_id == "sess_abc123"

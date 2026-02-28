@@ -13,11 +13,19 @@ class AskAgent(BaseAgent):
     content or pipeline stages. It is a simple one-shot query agent.
     """
 
-    def __init__(self, *, prompt: str = "", writable: bool = False, **kwargs):
+    def __init__(
+        self,
+        *,
+        prompt: str = "",
+        writable: bool = False,
+        custom_system_prompt: str | None = None,
+        **kwargs,
+    ):
         kwargs.setdefault("timeout", 300)
         super().__init__(**kwargs)
         self._prompt = prompt
         self._writable = writable
+        self._custom_system_prompt = custom_system_prompt
 
     @property
     def name(self) -> str:
@@ -29,6 +37,8 @@ class AskAgent(BaseAgent):
             "Help the user query, inspect, or manage their books.",
             "Always respond in the same language as the user's prompt.",
         ]
+        if self._custom_system_prompt:
+            lines.append(f"\n{self._custom_system_prompt}")
         if self.book_token:
             lines.append(f"\nTarget book token: {self.book_token}")
         return "\n".join(lines)

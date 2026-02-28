@@ -126,7 +126,18 @@ def mystery(prompt: str, model: str | None, book: str | None, json_progress: boo
     "--writable", "-w", is_flag=True, default=False,
     help="允許建立/編輯檔案（預設唯讀）。",
 )
-def ask(prompt: str, model: str | None, book: str | None, writable: bool):
+@click.option("--resume", "-r", default=None, help="Resume 之前的 session ID（多輪對話）。")
+@click.option("--system-prompt", default=None, help="自訂 system prompt。")
+@click.option("--json", "json_output", is_flag=True, default=False, help="輸出 JSON（含 session_id）。")
+def ask(
+    prompt: str,
+    model: str | None,
+    book: str | None,
+    writable: bool,
+    resume: str | None,
+    system_prompt: str | None,
+    json_output: bool,
+):
     """快速提問或操作 Slima 書籍（輕量版，不跑完整管線）。
 
     \b
@@ -134,6 +145,9 @@ def ask(prompt: str, model: str | None, book: str | None, writable: bool):
       slima-agents ask "列出我所有的書"
       slima-agents ask --book bk_abc123 "這本書有哪些章節？"
       slima-agents ask --book bk_abc123 --writable "幫我建一個 notes.md"
+      slima-agents ask --resume sess_abc123 "繼續上次的話題"
+      slima-agents ask --system-prompt "你是一個海盜" "說你好"
+      slima-agents ask --json "你好"
     """
     console = Console()
     resolved_model = model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)
@@ -148,16 +162,35 @@ def ask(prompt: str, model: str | None, book: str | None, writable: bool):
             model=resolved_model,
             prompt=prompt,
             writable=writable,
+            resume_session=resume or "",
+            custom_system_prompt=system_prompt,
         )
         return await agent.run()
 
     try:
+        import json as json_mod
+
         result = asyncio.run(_run())
-        # Write UTF-8 directly to stdout buffer to avoid:
-        # 1. Rich _unicode_data crash in Nuitka onefile builds
-        # 2. Windows cp950 encoding errors with Chinese text
-        sys.stdout.buffer.write(result.full_output.encode("utf-8"))
-        sys.stdout.buffer.write(b"\n")
+
+        if json_output:
+            # JSON mode: structured output with session_id for frontend
+            payload = json_mod.dumps({
+                "session_id": result.session_id,
+                "result": result.full_output,
+                "num_turns": result.num_turns,
+                "cost_usd": result.cost_usd,
+                "duration_s": round(result.duration_s, 2),
+            }, ensure_ascii=False)
+            sys.stdout.buffer.write(payload.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+        else:
+            # Plain text mode (backward compatible)
+            # Write UTF-8 directly to stdout buffer to avoid:
+            # 1. Rich _unicode_data crash in Nuitka onefile builds
+            # 2. Windows cp950 encoding errors with Chinese text
+            sys.stdout.buffer.write(result.full_output.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+
         sys.stdout.buffer.flush()
     except KeyboardInterrupt:
         console.print("\n[yellow]已取消。[/yellow]")
