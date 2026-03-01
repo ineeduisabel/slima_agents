@@ -21,7 +21,7 @@ class AskAgent(BaseAgent):
         custom_system_prompt: str | None = None,
         **kwargs,
     ):
-        kwargs.setdefault("timeout", 300)
+        kwargs.setdefault("timeout", 3600)
         super().__init__(**kwargs)
         self._prompt = prompt
         self._writable = writable
@@ -49,4 +49,6 @@ class AskAgent(BaseAgent):
     def allowed_tools(self) -> list[str]:
         if self._writable:
             return SLIMA_MCP_TOOLS
-        return SLIMA_MCP_ALL_READ_TOOLS
+        # Return empty list to skip --allowedTools, enabling web search
+        # and all native claude tools alongside Slima MCP read tools.
+        return []

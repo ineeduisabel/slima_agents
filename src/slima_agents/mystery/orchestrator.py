@@ -377,6 +377,7 @@ class MysteryOrchestratorAgent:
             console=self.console,
         ) as progress:
             task_id = progress.add_task(f"[Stage {stage}] {name}...", total=None)
+            agent.on_event = self.emitter.make_agent_callback(agent.name, stage=stage)
             self.emitter.agent_start(stage, agent.name)
             try:
                 result = await agent.run()

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class ClaudeRunner:
         max_turns: int = DEFAULT_MAX_TURNS,
         retry_on_timeout: bool = True,
         resume_session: str = "",
+        on_event: Callable[[dict], None] | None = None,
     ) -> RunOutput:
         """Run a prompt through the claude CLI and return structured output.
 
@@ -62,6 +64,9 @@ class ClaudeRunner:
                 that create files (retry could cause duplicates).
             resume_session: Session ID to resume a previous conversation via
                 ``--resume``. Empty string means start a new session.
+            on_event: Optional callback invoked for each stream-json event
+                (parsed dict). Errors in the callback are logged but don't
+                interrupt processing.
 
         Returns:
             RunOutput with text, num_turns, cost_usd, and timed_out.
@@ -113,7 +118,7 @@ class ClaudeRunner:
                 )
 
                 result_text, num_turns, cost_usd, timed_out, sess_id = await _read_stream(
-                    proc, timeout
+                    proc, timeout, on_event=on_event
                 )
 
                 if timed_out:
@@ -165,8 +170,15 @@ class ClaudeRunner:
 async def _read_stream(
     proc: asyncio.subprocess.Process,
     timeout: int,
+    on_event: Callable[[dict], None] | None = None,
 ) -> tuple[str, int, float, bool, str]:
     """Read stream-json events from the subprocess stdout.
+
+    Args:
+        proc: The subprocess to read from.
+        timeout: Max seconds to wait.
+        on_event: Optional callback invoked for each parsed event dict.
+            Errors in the callback are logged but don't interrupt processing.
 
     Returns (result_text, num_turns, cost_usd, timed_out, session_id).
     """
@@ -187,6 +199,13 @@ async def _read_stream(
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+
+                # Forward event to callback (if provided)
+                if on_event is not None:
+                    try:
+                        on_event(event)
+                    except Exception:
+                        logger.debug("[stream] on_event callback error", exc_info=True)
 
                 etype = event.get("type")
 

@@ -478,6 +478,7 @@ class GenericOrchestrator:
             task_id = progress.add_task(
                 f"[Stage {stage_num}] {display}...", total=None
             )
+            agent.on_event = self.emitter.make_agent_callback(agent.name, stage=stage_num)
             self.emitter.agent_start(stage_num, agent.name)
             try:
                 result = await agent.run()
@@ -543,6 +544,7 @@ class GenericOrchestrator:
             console=self.console,
         ) as progress:
             task_id = progress.add_task(f"[Stage {stage_num}] {display} R1...", total=None)
+            r1_agent.on_event = self.emitter.make_agent_callback(r1_agent.name, stage=stage_num)
             self.emitter.agent_start(stage_num, r1_agent.name)
             r1_result = await r1_agent.run()
             self.emitter.agent_complete(
@@ -573,6 +575,7 @@ class GenericOrchestrator:
             console=self.console,
         ) as progress:
             task_id = progress.add_task(f"[Stage {stage_num}] {display} R2...", total=None)
+            r2_agent.on_event = self.emitter.make_agent_callback(r2_agent.name, stage=stage_num)
             self.emitter.agent_start(stage_num, r2_agent.name)
             r2_result = await r2_agent.run()
             self.emitter.agent_complete(

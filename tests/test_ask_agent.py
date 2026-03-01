@@ -34,14 +34,9 @@ async def test_ask_agent_returns_result():
 
 
 def test_ask_agent_readonly_tools():
-    """Default allowed_tools should be SLIMA_MCP_ALL_READ_TOOLS."""
+    """Default allowed_tools returns [] (no whitelist = all tools enabled)."""
     agent = AskAgent(context=WorldContext(), prompt="test")
-    assert agent.allowed_tools() == SLIMA_MCP_ALL_READ_TOOLS
-    # Should not contain any write/create tools
-    for tool in agent.allowed_tools():
-        assert "create" not in tool
-        assert "write" not in tool
-        assert "edit" not in tool
+    assert agent.allowed_tools() == []
 
 
 def test_ask_agent_writable_tools():
@@ -69,9 +64,9 @@ def test_ask_agent_without_book_token():
 
 
 def test_ask_agent_timeout_default():
-    """Default timeout should be 300s."""
+    """Default timeout should be 3600s."""
     agent = AskAgent(context=WorldContext(), prompt="test")
-    assert agent.timeout == 300
+    assert agent.timeout == 3600
 
 
 def test_ask_agent_timeout_override():

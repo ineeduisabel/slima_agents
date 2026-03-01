@@ -397,6 +397,7 @@ class OrchestratorAgent:
                 tasks[name] = progress.add_task(f"[{phase_name}] {name}...", total=None)
 
             async def _run_one(name: str, agent):
+                agent.on_event = self.emitter.make_agent_callback(name, stage=stage)
                 self.emitter.agent_start(stage, name)
                 try:
                     result = await agent.run()

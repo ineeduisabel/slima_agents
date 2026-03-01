@@ -130,6 +130,7 @@ def mystery(prompt: str, model: str | None, book: str | None, json_progress: boo
 @click.option("--resume", "-r", default=None, help="Resume 之前的 session ID（多輪對話）。")
 @click.option("--system-prompt", default=None, help="自訂 system prompt。")
 @click.option("--json", "json_output", is_flag=True, default=False, help="輸出 JSON（含 session_id）。")
+@click.option("--json-progress", "json_progress", is_flag=True, default=False, help="輸出 NDJSON 串流事件到 stdout。")
 def ask(
     prompt: str,
     model: str | None,
@@ -138,6 +139,7 @@ def ask(
     resume: str | None,
     system_prompt: str | None,
     json_output: bool,
+    json_progress: bool,
 ):
     """快速提問或操作 Slima 書籍（輕量版，不跑完整管線）。
 
@@ -149,14 +151,21 @@ def ask(
       slima-agents ask --resume sess_abc123 "繼續上次的話題"
       slima-agents ask --system-prompt "你是一個海盜" "說你好"
       slima-agents ask --json "你好"
+      slima-agents ask --json-progress "search AI news"
     """
-    console = Console()
+    use_ndjson = json_progress or json_output
+    if use_ndjson:
+        console = Console(file=sys.stderr, no_color=True)
+    else:
+        console = Console()
     resolved_model = model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)
+    emitter = ProgressEmitter(enabled=json_progress)
 
     async def _run():
         from .agents.ask import AskAgent
         from .agents.context import WorldContext
 
+        on_event = emitter.make_agent_callback("AskAgent") if json_progress else None
         agent = AskAgent(
             context=WorldContext(),
             book_token=book or "",
@@ -165,16 +174,25 @@ def ask(
             writable=writable,
             resume_session=resume or "",
             custom_system_prompt=system_prompt,
+            on_event=on_event,
         )
         return await agent.run()
 
     try:
-        import json as json_mod
-
         result = asyncio.run(_run())
 
-        if json_output:
-            # JSON mode: structured output with session_id for frontend
+        if json_progress:
+            # NDJSON mode: emit ask_result event
+            emitter.ask_result(
+                session_id=result.session_id,
+                result=result.full_output,
+                num_turns=result.num_turns,
+                cost_usd=result.cost_usd,
+                duration_s=result.duration_s,
+            )
+        elif json_output:
+            # Legacy JSON mode: single JSON blob for backward compat
+            import json as json_mod
             payload = json_mod.dumps({
                 "session_id": result.session_id,
                 "result": result.full_output,
@@ -184,6 +202,7 @@ def ask(
             }, ensure_ascii=False)
             sys.stdout.buffer.write(payload.encode("utf-8"))
             sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
         else:
             # Plain text mode (backward compatible)
             # Write UTF-8 directly to stdout buffer to avoid:
@@ -191,8 +210,8 @@ def ask(
             # 2. Windows cp950 encoding errors with Chinese text
             sys.stdout.buffer.write(result.full_output.encode("utf-8"))
             sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
 
-        sys.stdout.buffer.flush()
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled.[/yellow]")
         raise SystemExit(130)
@@ -273,7 +292,8 @@ def write(prompt: str, model: str | None, book: str | None, source_book: str | N
 @click.argument("prompt")
 @click.option("--model", "-m", default=None, help="指定 Claude 模型。")
 @click.option("--book", "-b", default=None, help="來源書籍 token（讀取既有書來規劃）。")
-def plan(prompt: str, model: str | None, book: str | None):
+@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 串流事件到 stdout。")
+def plan(prompt: str, model: str | None, book: str | None, json_progress: bool):
     """只產生 pipeline plan JSON（不執行）。
 
     \b
@@ -281,8 +301,10 @@ def plan(prompt: str, model: str | None, book: str | None):
       slima-agents plan "寫密室推理"
       slima-agents plan --book bk_abc123 "依照這本書重寫"
       slima-agents plan "A romance novel" --model claude-opus-4-6
+      slima-agents plan --json-progress "寫密室推理"
     """
     cli_console = Console(file=sys.stderr)
+    emitter = ProgressEmitter(enabled=json_progress)
 
     try:
         config = Config.load(model_override=model)
@@ -294,16 +316,20 @@ def plan(prompt: str, model: str | None, book: str | None):
         from .pipeline.context import DynamicContext
         from .pipeline.planner import GenericPlannerAgent
 
+        on_event = emitter.make_agent_callback("GenericPlannerAgent", stage=1) if json_progress else None
         ctx = DynamicContext(allowed_sections=["concept"])
         planner = GenericPlannerAgent(
             context=ctx, model=config.model, prompt=prompt,
             source_book=book or "",
+            on_event=on_event,
         )
 
         if book:
             cli_console.print(f"[dim]Running planner (source book: {book})...[/dim]")
         else:
             cli_console.print("[dim]Running planner...[/dim]")
+        emitter.stage_start(1, "planning", ["GenericPlannerAgent"])
+        emitter.agent_start(1, "GenericPlannerAgent")
         await planner.run()
 
         if not planner.plan:

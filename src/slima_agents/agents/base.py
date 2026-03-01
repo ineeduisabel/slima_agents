@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 
 from rich.console import Console
 
@@ -60,12 +60,14 @@ class BaseAgent(ABC):
         model: str | None = None,
         timeout: int = 3600,
         resume_session: str = "",
+        on_event: Callable[[dict], None] | None = None,
     ):
         self.context = context
         self.book_token = book_token
         self.model = model
         self.timeout = timeout
         self.resume_session = resume_session
+        self.on_event = on_event
 
     @property
     @abstractmethod
@@ -107,6 +109,7 @@ class BaseAgent(ABC):
                 timeout=self.timeout,
                 retry_on_timeout=not has_write,
                 resume_session=self.resume_session,
+                on_event=self.on_event,
             )
             duration = time.time() - t0
 

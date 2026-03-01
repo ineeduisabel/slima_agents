@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
+
+logger = logging.getLogger(__name__)
 
 
 def _iso_now() -> str:
@@ -105,6 +108,65 @@ class ProgressEmitter:
 
     def plan_approved(self, version: int = 1) -> None:
         self._emit("plan_approved", version=version)
+
+    # -- Streaming events ----------------------------------------------------
+
+    def tool_use(self, agent: str, tool_name: str, stage: int | None = None) -> None:
+        data: dict[str, Any] = {"agent": agent, "tool_name": tool_name}
+        if stage is not None:
+            data["stage"] = stage
+        self._emit("tool_use", **data)
+
+    def text_delta(self, agent: str, text: str, stage: int | None = None) -> None:
+        data: dict[str, Any] = {"agent": agent, "text": text}
+        if stage is not None:
+            data["stage"] = stage
+        self._emit("text_delta", **data)
+
+    def ask_result(
+        self,
+        session_id: str,
+        result: str,
+        num_turns: int = 0,
+        cost_usd: float = 0.0,
+        duration_s: float = 0.0,
+    ) -> None:
+        self._emit(
+            "ask_result",
+            session_id=session_id,
+            result=result,
+            num_turns=num_turns,
+            cost_usd=round(cost_usd, 4),
+            duration_s=round(duration_s, 2),
+        )
+
+    def make_agent_callback(
+        self, agent_name: str, stage: int | None = None
+    ) -> Callable[[dict], None]:
+        """Factory: create an on_event callback for ClaudeRunner.
+
+        Parses Claude stream-json ``assistant`` events and emits
+        ``tool_use`` / ``text_delta`` NDJSON events.
+        """
+
+        def _callback(event: dict) -> None:
+            try:
+                etype = event.get("type")
+                if etype != "assistant":
+                    return
+                msg = event.get("message", {})
+                for block in msg.get("content", []):
+                    btype = block.get("type")
+                    if btype == "tool_use":
+                        self.tool_use(agent_name, block.get("name", ""), stage)
+                    elif btype == "text":
+                        text = block.get("text", "")
+                        if text:
+                            self.text_delta(agent_name, text, stage)
+            except Exception:
+                logger.debug("make_agent_callback error", exc_info=True)
+
+        return _callback
 
     # -- Errors --------------------------------------------------------------
 
