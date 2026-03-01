@@ -427,6 +427,87 @@ def plan_loop(prompt: str, model: str | None, book: str | None):
 
 
 @main.command()
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="Specify Claude model.")
+@click.option("--book", "-b", default=None, help="Write to existing book (skip creation).")
+@click.option("--json-progress", is_flag=True, default=False, help="Output NDJSON progress events to stdout.")
+def research(prompt: str, model: str | None, book: str | None, json_progress: bool):
+    """Quick market research — single-stage, full stack.
+
+    \b
+    Creates a Slima book and writes a market research report.
+    Simplest pipeline command — good for testing the full flow.
+
+    \b
+    Examples:
+      slima-agents research "AI code assistants market 2026"
+      slima-agents research --book bk_abc123 "competitor analysis"
+      slima-agents research --json-progress "SaaS pricing trends"
+    """
+    if json_progress:
+        cli_console = Console(file=sys.stderr, no_color=True)
+    else:
+        cli_console = Console()
+
+    emitter = ProgressEmitter(enabled=json_progress)
+
+    try:
+        config = Config.load(model_override=model)
+    except ConfigError as e:
+        cli_console.print(f"[red]Config error:[/red] {e}")
+        raise SystemExit(1)
+
+    async def _run():
+        from .agents.context import WorldContext
+        from .agents.research import MarketResearchAgent
+
+        async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
+            book_token = book or ""
+
+            if not book_token:
+                created = await slima.create_book(
+                    title=f"Market Research: {prompt[:50]}",
+                    description=prompt[:200],
+                )
+                book_token = created.token
+                emitter.book_created(book_token, created.title, prompt[:200])
+                cli_console.print(f"  Book created: [cyan]{book_token}[/cyan]")
+
+            emitter.pipeline_start(prompt=prompt, total_stages=1)
+            emitter.stage_start(1, "research", ["MarketResearchAgent"])
+            cli_console.print("  [dim]Running MarketResearchAgent...[/dim]")
+
+            agent = MarketResearchAgent(
+                context=WorldContext(),
+                book_token=book_token,
+                model=config.model,
+                prompt=prompt,
+            )
+            result = await agent.run()
+
+            emitter.agent_complete(
+                stage=1, agent="MarketResearchAgent",
+                duration_s=result.duration_s, timed_out=result.timed_out,
+                summary=result.summary, num_turns=result.num_turns,
+                cost_usd=result.cost_usd,
+            )
+            emitter.stage_complete(1, "research", result.duration_s)
+            emitter.pipeline_complete(book_token, result.duration_s)
+
+            cli_console.print(f"  [green]Done![/green] Book: [cyan]{book_token}[/cyan]")
+            return book_token
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
+        raise SystemExit(130)
+    except Exception as e:
+        cli_console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+
+@main.command()
 def status():
     """檢查 Slima 認證狀態與 Claude CLI 可用性。"""
     console = Console()

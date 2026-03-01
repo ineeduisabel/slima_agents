@@ -24,7 +24,12 @@ class Config:
     @classmethod
     def load(cls, model_override: str | None = None) -> Config:
         """從環境變數載入設定，未設定時自動讀取 ~/.slima/credentials.json。"""
-        load_dotenv()
+        try:
+            load_dotenv()
+        except UnicodeDecodeError:
+            # Nuitka onefile 或 Windows 環境可能找到 UTF-16 BOM 的 .env，跳過即可
+            # Electron 已透過 env var 傳入 SLIMA_API_TOKEN
+            pass
 
         slima_token = os.getenv("SLIMA_API_TOKEN", "")
         slima_base_url = os.getenv("SLIMA_BASE_URL", "")

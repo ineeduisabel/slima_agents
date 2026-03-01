@@ -249,6 +249,7 @@ def test_main_help(runner):
     assert "ask" in result.output
     assert "write" in result.output
     assert "plan" in result.output
+    assert "research" in result.output
     assert "status" in result.output
 
 

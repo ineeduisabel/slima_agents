@@ -132,3 +132,43 @@ def test_load_credentials_partial_keys(tmp_path):
         token, base_url = _load_credentials()
     assert token == "tok_only"
     assert base_url == ""
+
+
+# ---------- load_dotenv UnicodeDecodeError ----------
+
+
+def test_load_dotenv_unicode_error_is_caught(monkeypatch):
+    """Config.load() should survive when load_dotenv() hits a UTF-16 BOM .env file.
+
+    This happens on Windows with Nuitka onefile builds when a UTF-16 encoded
+    .env file is found in CWD or the temp extraction directory.
+    """
+    monkeypatch.setenv("SLIMA_API_TOKEN", "tok_env")
+    monkeypatch.delenv("SLIMA_BASE_URL", raising=False)
+    monkeypatch.delenv("SLIMA_AGENTS_MODEL", raising=False)
+
+    with patch("slima_agents.config.load_dotenv", side_effect=UnicodeDecodeError(
+        "utf-8", b"\xff\xfe", 0, 1, "invalid start byte"
+    )):
+        config = Config.load()
+
+    assert config.slima_api_token == "tok_env"
+    assert config.slima_base_url == DEFAULT_BASE_URL
+
+
+def test_load_dotenv_unicode_error_still_uses_credentials(monkeypatch, tmp_path):
+    """When load_dotenv() fails AND no env var, should still fall back to credentials.json."""
+    monkeypatch.delenv("SLIMA_API_TOKEN", raising=False)
+    monkeypatch.delenv("SLIMA_BASE_URL", raising=False)
+    monkeypatch.delenv("SLIMA_AGENTS_MODEL", raising=False)
+
+    cred_file = tmp_path / "credentials.json"
+    cred_file.write_text(json.dumps({"apiToken": "tok_from_creds"}))
+
+    with patch("slima_agents.config.load_dotenv", side_effect=UnicodeDecodeError(
+        "utf-8", b"\xff\xfe", 0, 1, "invalid start byte"
+    )):
+        with patch("slima_agents.config.CREDENTIALS_PATH", cred_file):
+            config = Config.load()
+
+    assert config.slima_api_token == "tok_from_creds"
