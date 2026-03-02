@@ -179,6 +179,35 @@ class TestEmitterOutput:
         events = _parse_events(buf)
         assert events[0]["version"] == 1
 
+    def test_plan_build_result_schema(self):
+        emitter, buf = _make_emitter()
+        emitter.plan_build_result(
+            plan_json='{"stages":[]}',
+            session_id="sess_plan",
+            num_turns=5,
+            cost_usd=0.0321,
+            duration_s=45.678,
+        )
+        events = _parse_events(buf)
+        ev = events[0]
+        assert ev["event"] == "plan_build_result"
+        assert ev["plan_json"] == '{"stages":[]}'
+        assert ev["session_id"] == "sess_plan"
+        assert ev["num_turns"] == 5
+        assert ev["cost_usd"] == 0.0321
+        assert ev["duration_s"] == 45.68  # rounded to 2 decimals
+
+    def test_plan_build_result_defaults(self):
+        emitter, buf = _make_emitter()
+        emitter.plan_build_result(plan_json='{}')
+        events = _parse_events(buf)
+        ev = events[0]
+        assert ev["event"] == "plan_build_result"
+        assert ev["session_id"] == ""
+        assert ev["num_turns"] == 0
+        assert ev["cost_usd"] == 0.0
+        assert ev["duration_s"] == 0.0
+
     def test_each_line_flushed(self):
         """Each event should end with newline."""
         emitter, buf = _make_emitter()

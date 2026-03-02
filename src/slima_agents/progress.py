@@ -140,6 +140,23 @@ class ProgressEmitter:
             duration_s=round(duration_s, 2),
         )
 
+    def plan_build_result(
+        self,
+        plan_json: str,
+        session_id: str = "",
+        num_turns: int = 0,
+        cost_usd: float = 0.0,
+        duration_s: float = 0.0,
+    ) -> None:
+        self._emit(
+            "plan_build_result",
+            plan_json=plan_json,
+            session_id=session_id,
+            num_turns=num_turns,
+            cost_usd=round(cost_usd, 4),
+            duration_s=round(duration_s, 2),
+        )
+
     def make_agent_callback(
         self, agent_name: str, stage: int | None = None
     ) -> Callable[[dict], None]:

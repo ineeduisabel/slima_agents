@@ -18,7 +18,7 @@ from .slima.client import SlimaClient
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="開啟除錯日誌。")
 def main(verbose: bool):
-    """Slima Agents — AI 驅動的世界觀建構系統。"""
+    """Slima Agents — AI 驅動的寫作系統。"""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -124,6 +124,103 @@ def task(
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled.[/yellow]")
         raise SystemExit(130)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+
+@main.command("plan-build")
+@click.argument("prompt")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
+@click.option("--json-progress", "json_progress", is_flag=True, default=False, help="輸出 NDJSON 串流事件到 stdout。")
+@click.option("--timeout", default=300, type=int, help="超時秒數（default: 300）。")
+def plan_build(prompt: str, model: str | None, json_progress: bool, timeout: int):
+    """產生驗證過的 TaskPlan JSON — 永遠只輸出 JSON。
+
+    \b
+    使用範例：
+      slima-agents plan-build "建構一個奇幻世界觀"
+      echo '{"stages":[...]}' | slima-agents plan-build "加一個角色設計階段"
+      slima-agents plan-build --json-progress "寫一個推理小說"
+    """
+    if json_progress:
+        console = Console(file=sys.stderr, no_color=True)
+    else:
+        console = Console(file=sys.stderr)
+    resolved_model = model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)
+    emitter = ProgressEmitter(enabled=json_progress)
+
+    # Read existing plan from stdin (if piped)
+    existing_plan = ""
+    if not sys.stdin.isatty():
+        existing_plan = sys.stdin.read().strip()
+
+    # Build the user message
+    if existing_plan:
+        user_message = (
+            f"# Existing Plan\n```json\n{existing_plan}\n```\n\n"
+            f"# User Request\n{prompt}"
+        )
+    else:
+        user_message = prompt
+
+    async def _run():
+        from .agents.context import WorldContext
+        from .agents.task import TaskAgent
+        from .agents.plan_builder import PLAN_BUILD_SYSTEM_PROMPT
+
+        on_event = emitter.make_agent_callback("PlanBuilder") if json_progress else None
+        agent = TaskAgent(
+            context=WorldContext(),
+            book_token="",
+            model=resolved_model,
+            timeout=timeout,
+            prompt=user_message,
+            system_prompt_text=PLAN_BUILD_SYSTEM_PROMPT,
+            tool_set="none",
+            on_event=on_event,
+        )
+        return await agent.run()
+
+    try:
+        result = asyncio.run(_run())
+
+        # Extract and validate JSON
+        from .agents.plan_builder import extract_json_object
+        from .agents.task_models import TaskPlan
+
+        try:
+            raw_dict = extract_json_object(result.full_output)
+        except ValueError as e:
+            console.print(f"[red]JSON extraction error:[/red] {e}")
+            raise SystemExit(1)
+
+        try:
+            task_plan = TaskPlan.model_validate(raw_dict)
+        except Exception as e:
+            console.print(f"[red]Validation error:[/red] {e}")
+            raise SystemExit(1)
+
+        validated_json = task_plan.model_dump_json(indent=2)
+
+        if json_progress:
+            emitter.plan_build_result(
+                plan_json=validated_json,
+                session_id=result.session_id,
+                num_turns=result.num_turns,
+                cost_usd=result.cost_usd,
+                duration_s=result.duration_s,
+            )
+        else:
+            sys.stdout.buffer.write(validated_json.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+        raise SystemExit(130)
+    except SystemExit:
+        raise
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)
