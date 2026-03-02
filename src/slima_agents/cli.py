@@ -124,8 +124,8 @@ def mystery(prompt: str, model: str | None, book: str | None, json_progress: boo
 @click.option("--model", "-m", default=None, help="指定 Claude 模型。")
 @click.option("--book", "-b", default=None, help="指定書籍 token（如 bk_abc123）。")
 @click.option(
-    "--writable", "-w", is_flag=True, default=False,
-    help="允許建立/編輯檔案（預設唯讀）。",
+    "--readonly", is_flag=True, default=False,
+    help="限制為唯讀模式（預設可讀寫）。",
 )
 @click.option("--resume", "-r", default=None, help="Resume 之前的 session ID（多輪對話）。")
 @click.option("--system-prompt", default=None, help="自訂 system prompt。")
@@ -135,7 +135,7 @@ def ask(
     prompt: str,
     model: str | None,
     book: str | None,
-    writable: bool,
+    readonly: bool,
     resume: str | None,
     system_prompt: str | None,
     json_output: bool,
@@ -147,7 +147,7 @@ def ask(
     使用範例：
       slima-agents ask "列出我所有的書"
       slima-agents ask --book bk_abc123 "這本書有哪些章節？"
-      slima-agents ask --book bk_abc123 --writable "幫我建一個 notes.md"
+      slima-agents ask --book bk_abc123 "幫我建一個 notes.md"
       slima-agents ask --resume sess_abc123 "繼續上次的話題"
       slima-agents ask --system-prompt "你是一個海盜" "說你好"
       slima-agents ask --json "你好"
@@ -171,7 +171,7 @@ def ask(
             book_token=book or "",
             model=resolved_model,
             prompt=prompt,
-            writable=writable,
+            writable=not readonly,
             resume_session=resume or "",
             custom_system_prompt=system_prompt,
             on_event=on_event,
@@ -223,20 +223,123 @@ def ask(
 @main.command()
 @click.argument("prompt")
 @click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
-@click.option("--book", "-b", default=None, help="繼續寫作指定書籍（恢復模式）。")
-@click.option("--source-book", "-s", default=None, help="來源書籍 token（讀取既有書來規劃）。")
-@click.option("--plan", "plan_file", default=None, type=click.Path(exists=True), help="使用自訂 plan JSON 檔案。")
-@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 進度事件到 stdout。")
-def write(prompt: str, model: str | None, book: str | None, source_book: str | None, plan_file: str | None, json_progress: bool):
-    """Plan-driven pipeline: AI 先規劃再依序寫作（任何類型）。
+@click.option("--book", "-b", default=None, help="Target book token（如 bk_abc123）。")
+@click.option(
+    "--tool-set", "-t", default="read",
+    type=click.Choice(["write", "read", "all", "none"], case_sensitive=False),
+    help="工具集（default: read）。",
+)
+@click.option("--system-prompt", default=None, help="自訂 system prompt。")
+@click.option("--plan-first", is_flag=True, default=False, help="啟用規劃模式。")
+@click.option("--language-rule", is_flag=True, default=False, help="加入 LANGUAGE_RULE。")
+@click.option("--resume", "-r", default=None, help="Resume 之前的 session ID。")
+@click.option("--json", "json_output", is_flag=True, default=False, help="輸出 JSON（含 session_id）。")
+@click.option("--json-progress", "json_progress", is_flag=True, default=False, help="輸出 NDJSON 串流事件到 stdout。")
+@click.option("--timeout", default=3600, type=int, help="超時秒數（default: 3600）。")
+def task(
+    prompt: str,
+    model: str | None,
+    book: str | None,
+    tool_set: str,
+    system_prompt: str | None,
+    plan_first: bool,
+    language_rule: bool,
+    resume: str | None,
+    json_output: bool,
+    json_progress: bool,
+    timeout: int,
+):
+    """通用可配置 Agent — 透過參數決定行為。
 
     \b
     使用範例：
-      slima-agents write "寫密室推理"
-      slima-agents write --book bk_abc123 "繼續寫作"
-      slima-agents write --source-book bk_abc123 "依照這本書重寫"
-      slima-agents write --plan my-plan.json "執行自訂計畫"
-      slima-agents write "A sci-fi adventure" --model claude-opus-4-6
+      slima-agents task "列出我所有的書"
+      slima-agents task --book bk_abc123 --tool-set write "建立角色檔案"
+      slima-agents task --plan-first --language-rule "寫一個短篇故事"
+      slima-agents task --system-prompt "你是一個海盜" "說你好"
+      slima-agents task --json "你好"
+      slima-agents task --resume sess_abc123 "繼續上次的話題"
+    """
+    use_ndjson = json_progress or json_output
+    if use_ndjson:
+        console = Console(file=sys.stderr, no_color=True)
+    else:
+        console = Console()
+    resolved_model = model or os.getenv("SLIMA_AGENTS_MODEL", DEFAULT_MODEL)
+    emitter = ProgressEmitter(enabled=json_progress)
+
+    async def _run():
+        from .agents.context import WorldContext
+        from .agents.task import TaskAgent
+
+        on_event = emitter.make_agent_callback("TaskAgent") if json_progress else None
+        agent = TaskAgent(
+            context=WorldContext(),
+            book_token=book or "",
+            model=resolved_model,
+            timeout=timeout,
+            prompt=prompt,
+            system_prompt_text=system_prompt or "",
+            tool_set=tool_set,
+            plan_first=plan_first,
+            include_language_rule=language_rule,
+            resume_session=resume or "",
+            on_event=on_event,
+        )
+        return await agent.run()
+
+    try:
+        result = asyncio.run(_run())
+
+        if json_progress:
+            emitter.ask_result(
+                session_id=result.session_id,
+                result=result.full_output,
+                num_turns=result.num_turns,
+                cost_usd=result.cost_usd,
+                duration_s=result.duration_s,
+            )
+        elif json_output:
+            import json as json_mod
+            payload = json_mod.dumps({
+                "session_id": result.session_id,
+                "result": result.full_output,
+                "num_turns": result.num_turns,
+                "cost_usd": result.cost_usd,
+                "duration_s": round(result.duration_s, 2),
+            }, ensure_ascii=False)
+            sys.stdout.buffer.write(payload.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+        else:
+            sys.stdout.buffer.write(result.full_output.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled.[/yellow]")
+        raise SystemExit(130)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1)
+
+
+@main.command("task-pipeline")
+@click.option("--plan", "plan_file", required=True, type=click.Path(exists=True), help="TaskPlan JSON 檔案（必填）。")
+@click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
+@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 進度事件到 stdout。")
+def task_pipeline(plan_file: str, model: str | None, json_progress: bool):
+    """Front-end configurable multi-stage TaskAgent pipeline.
+
+    \b
+    Reads a TaskPlan JSON file and executes stages sequentially / in parallel.
+    Stages with the same number run concurrently (asyncio.gather).
+
+    \b
+    使用範例：
+      slima-agents task-pipeline --plan stages.json
+      slima-agents task-pipeline --plan stages.json --model claude-opus-4-6
+      slima-agents task-pipeline --plan stages.json --json-progress
     """
     if json_progress:
         cli_console = Console(file=sys.stderr, no_color=True)
@@ -251,283 +354,37 @@ def write(prompt: str, model: str | None, book: str | None, source_book: str | N
         cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
-    # Load external plan if provided
-    external_plan = None
-    if plan_file:
-        import json as json_mod
-        from .pipeline.models import PipelinePlan
-        try:
-            with open(plan_file, encoding="utf-8") as f:
-                data = json_mod.load(f)
-            external_plan = PipelinePlan.model_validate(data)
-            cli_console.print(f"  [green]Loaded plan from:[/green] {plan_file}")
-        except Exception as e:
-            cli_console.print(f"[red]Plan file error:[/red] {e}")
-            raise SystemExit(1)
+    # Load TaskPlan
+    import json as json_mod
+    from .agents.task_models import TaskPlan
+
+    try:
+        with open(plan_file, encoding="utf-8") as f:
+            data = json_mod.load(f)
+        task_plan = TaskPlan.model_validate(data)
+        cli_console.print(f"  [green]Loaded task plan from:[/green] {plan_file}")
+    except Exception as e:
+        cli_console.print(f"[red]Plan file error:[/red] {e}")
+        raise SystemExit(1)
 
     async def _run():
-        from .pipeline.orchestrator import GenericOrchestrator
+        from .agents.task_orchestrator import TaskOrchestrator
         async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
-            orch = GenericOrchestrator(
+            orch = TaskOrchestrator(
                 slima_client=slima,
                 model=config.model,
                 emitter=emitter,
                 console=cli_console,
             )
-            return await orch.run(
-                prompt,
-                resume_book=book,
-                external_plan=external_plan,
-                source_book=source_book,
-            )
+            return await orch.run(task_plan)
 
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
         cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
         raise SystemExit(130)
-
-
-@main.command()
-@click.argument("prompt")
-@click.option("--model", "-m", default=None, help="指定 Claude 模型。")
-@click.option("--book", "-b", default=None, help="來源書籍 token（讀取既有書來規劃）。")
-@click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 串流事件到 stdout。")
-def plan(prompt: str, model: str | None, book: str | None, json_progress: bool):
-    """只產生 pipeline plan JSON（不執行）。
-
-    \b
-    使用範例：
-      slima-agents plan "寫密室推理"
-      slima-agents plan --book bk_abc123 "依照這本書重寫"
-      slima-agents plan "A romance novel" --model claude-opus-4-6
-      slima-agents plan --json-progress "寫密室推理"
-    """
-    cli_console = Console(file=sys.stderr)
-    emitter = ProgressEmitter(enabled=json_progress)
-
-    try:
-        config = Config.load(model_override=model)
-    except ConfigError as e:
-        cli_console.print(f"[red]Config error:[/red] {e}")
-        raise SystemExit(1)
-
-    async def _run():
-        from .pipeline.context import DynamicContext
-        from .pipeline.planner import GenericPlannerAgent
-
-        on_event = emitter.make_agent_callback("GenericPlannerAgent", stage=1) if json_progress else None
-        ctx = DynamicContext(allowed_sections=["concept"])
-        planner = GenericPlannerAgent(
-            context=ctx, model=config.model, prompt=prompt,
-            source_book=book or "",
-            on_event=on_event,
-        )
-
-        if book:
-            cli_console.print(f"[dim]Running planner (source book: {book})...[/dim]")
-        else:
-            cli_console.print("[dim]Running planner...[/dim]")
-        emitter.stage_start(1, "planning", ["GenericPlannerAgent"])
-        emitter.agent_start(1, "GenericPlannerAgent")
-        await planner.run()
-
-        if not planner.plan:
-            cli_console.print("[red]Planner failed to produce a valid plan.[/red]")
-            raise SystemExit(1)
-
-        return planner.plan
-
-    try:
-        result_plan = asyncio.run(_run())
-        # Output plan JSON to stdout
-        sys.stdout.buffer.write(result_plan.model_dump_json(indent=2).encode("utf-8"))
-        sys.stdout.buffer.write(b"\n")
-        sys.stdout.buffer.flush()
-    except KeyboardInterrupt:
-        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
-        raise SystemExit(130)
     except SystemExit:
         raise
-    except Exception as e:
-        cli_console.print(f"[red]Error:[/red] {e}")
-        raise SystemExit(1)
-
-
-@main.command("plan-loop")
-@click.argument("prompt")
-@click.option("--model", "-m", default=None, help="指定 Claude 模型。")
-@click.option("--book", "-b", default=None, help="來源書籍 token（讀取既有書來規劃）。")
-def plan_loop(prompt: str, model: str | None, book: str | None):
-    """互動式 plan 修訂迴圈：產生 → 審閱 → 修改 → 核准。
-
-    \b
-    使用範例：
-      slima-agents plan-loop "寫密室推理"
-      slima-agents plan-loop --book bk_abc123 "依照這本書重寫"
-    """
-    import json as json_mod
-
-    cli_console = Console(file=sys.stderr)
-
-    try:
-        config = Config.load(model_override=model)
-    except ConfigError as e:
-        cli_console.print(f"[red]Config error:[/red] {e}")
-        raise SystemExit(1)
-
-    async def _run():
-        from .pipeline.orchestrator import GenericOrchestrator
-
-        async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
-            orch = GenericOrchestrator(
-                slima_client=slima,
-                model=config.model,
-                console=cli_console,
-            )
-
-            # Initial plan
-            cli_console.print("[dim]Generating initial plan...[/dim]")
-            current_plan, session_id = await orch.plan(prompt, source_book=book)
-            version = 1
-
-            while True:
-                # Display plan summary
-                cli_console.print()
-                cli_console.print(f"[bold cyan]===== Plan v{version} =====[/bold cyan]")
-                cli_console.print(f"  Title: [yellow]{current_plan.title}[/yellow]")
-                cli_console.print(f"  Genre: {current_plan.genre}")
-                cli_console.print(f"  Action: {current_plan.action_type}")
-                cli_console.print(f"  Stages: {len(current_plan.stages)}")
-                for s in sorted(current_plan.stages, key=lambda x: x.number):
-                    cli_console.print(f"    {s.number}. {s.display_name} ({s.name})")
-                if current_plan.validation:
-                    cli_console.print(f"    {current_plan.validation.number}. Validation (R1+R2)")
-                if current_plan.polish_stage:
-                    cli_console.print(f"    {current_plan.polish_stage.number}. {current_plan.polish_stage.display_name}")
-                cli_console.print()
-
-                # Get user input
-                cli_console.print("[bold]Enter feedback to revise, or 'approve' to accept:[/bold]")
-                try:
-                    feedback = input("> ").strip()
-                except EOFError:
-                    cli_console.print("[yellow]EOF — aborting.[/yellow]")
-                    raise SystemExit(130)
-
-                if not feedback:
-                    continue
-
-                if feedback.lower() in ("approve", "ok", "yes", "y", "確認", "核准"):
-                    cli_console.print("[green]Plan approved![/green]")
-                    break
-
-                # Revise
-                cli_console.print(f"[dim]Revising plan (v{version + 1})...[/dim]")
-                current_plan, session_id = await orch.revise_plan(
-                    prompt=prompt,
-                    feedback=feedback,
-                    session_id=session_id,
-                    source_book=book,
-                )
-                version += 1
-
-            return current_plan
-
-    try:
-        final_plan = asyncio.run(_run())
-        # Output final approved plan JSON to stdout
-        sys.stdout.buffer.write(
-            final_plan.model_dump_json(indent=2).encode("utf-8")
-        )
-        sys.stdout.buffer.write(b"\n")
-        sys.stdout.buffer.flush()
-    except KeyboardInterrupt:
-        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
-        raise SystemExit(130)
-    except SystemExit:
-        raise
-    except Exception as e:
-        cli_console.print(f"[red]Error:[/red] {e}")
-        raise SystemExit(1)
-
-
-@main.command()
-@click.argument("prompt")
-@click.option("--model", "-m", default=None, help="Specify Claude model.")
-@click.option("--book", "-b", default=None, help="Write to existing book (skip creation).")
-@click.option("--json-progress", is_flag=True, default=False, help="Output NDJSON progress events to stdout.")
-def research(prompt: str, model: str | None, book: str | None, json_progress: bool):
-    """Quick market research — single-stage, full stack.
-
-    \b
-    Creates a Slima book and writes a market research report.
-    Simplest pipeline command — good for testing the full flow.
-
-    \b
-    Examples:
-      slima-agents research "AI code assistants market 2026"
-      slima-agents research --book bk_abc123 "competitor analysis"
-      slima-agents research --json-progress "SaaS pricing trends"
-    """
-    if json_progress:
-        cli_console = Console(file=sys.stderr, no_color=True)
-    else:
-        cli_console = Console()
-
-    emitter = ProgressEmitter(enabled=json_progress)
-
-    try:
-        config = Config.load(model_override=model)
-    except ConfigError as e:
-        cli_console.print(f"[red]Config error:[/red] {e}")
-        raise SystemExit(1)
-
-    async def _run():
-        from .agents.context import WorldContext
-        from .agents.research import MarketResearchAgent
-
-        async with SlimaClient(config.slima_base_url, config.slima_api_token) as slima:
-            book_token = book or ""
-
-            if not book_token:
-                created = await slima.create_book(
-                    title=f"Market Research: {prompt[:50]}",
-                    description=prompt[:200],
-                )
-                book_token = created.token
-                emitter.book_created(book_token, created.title, prompt[:200])
-                cli_console.print(f"  Book created: [cyan]{book_token}[/cyan]")
-
-            emitter.pipeline_start(prompt=prompt, total_stages=1)
-            emitter.stage_start(1, "research", ["MarketResearchAgent"])
-            cli_console.print("  [dim]Running MarketResearchAgent...[/dim]")
-
-            agent = MarketResearchAgent(
-                context=WorldContext(),
-                book_token=book_token,
-                model=config.model,
-                prompt=prompt,
-            )
-            result = await agent.run()
-
-            emitter.agent_complete(
-                stage=1, agent="MarketResearchAgent",
-                duration_s=result.duration_s, timed_out=result.timed_out,
-                summary=result.summary, num_turns=result.num_turns,
-                cost_usd=result.cost_usd,
-            )
-            emitter.stage_complete(1, "research", result.duration_s)
-            emitter.pipeline_complete(book_token, result.duration_s)
-
-            cli_console.print(f"  [green]Done![/green] Book: [cyan]{book_token}[/cyan]")
-            return book_token
-
-    try:
-        asyncio.run(_run())
-    except KeyboardInterrupt:
-        cli_console.print("\n[yellow]Cancelled.[/yellow] (Ctrl+C)")
-        raise SystemExit(130)
     except Exception as e:
         cli_console.print(f"[red]Error:[/red] {e}")
         raise SystemExit(1)

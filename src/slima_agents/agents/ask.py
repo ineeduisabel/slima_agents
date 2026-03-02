@@ -17,7 +17,7 @@ class AskAgent(BaseAgent):
         self,
         *,
         prompt: str = "",
-        writable: bool = False,
+        writable: bool = True,
         custom_system_prompt: str | None = None,
         **kwargs,
     ):

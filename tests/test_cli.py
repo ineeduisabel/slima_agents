@@ -142,91 +142,6 @@ def test_mystery_config_error(runner):
     assert "Config error:" in result.output
 
 
-# ---------- write ----------
-
-
-def test_write_config_error(runner):
-    """write should exit 1 on ConfigError."""
-    with patch("slima_agents.cli.Config.load", side_effect=ConfigError("no token")):
-        result = runner.invoke(main, ["write", "test prompt"])
-    assert result.exit_code == 1
-    assert "Config error:" in result.output
-
-
-def test_write_plan_file_loading(runner, tmp_path):
-    """write --plan should load and validate plan JSON."""
-    plan_data = {
-        "title": "Test Book",
-        "genre": "test",
-        "language": "en",
-        "description": "A test",
-        "concept_summary": "Testing",
-        "context_sections": ["concept"],
-        "stages": [{
-            "number": 3,
-            "name": "writing",
-            "display_name": "Writing",
-            "instructions": "Write things",
-            "initial_message": "Start writing",
-            "tool_set": "write",
-        }],
-    }
-    plan_file = tmp_path / "plan.json"
-    plan_file.write_text(json.dumps(plan_data))
-
-    mock_cfg = _mock_config()
-    with patch("slima_agents.cli.Config.load", return_value=mock_cfg):
-        with patch("slima_agents.pipeline.orchestrator.GenericOrchestrator") as MockOrch:
-            instance = AsyncMock()
-            instance.run = AsyncMock(return_value="bk_test123")
-            MockOrch.return_value = instance
-
-            with patch("slima_agents.cli.SlimaClient") as MockClient:
-                ctx = AsyncMock()
-                MockClient.return_value.__aenter__ = AsyncMock(return_value=ctx)
-                MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
-                result = runner.invoke(main, ["write", "--plan", str(plan_file), "test"])
-
-    # Should load the plan file successfully
-    if result.exit_code == 0:
-        assert "Loaded plan from:" in result.output
-
-
-def test_write_invalid_plan_file(runner, tmp_path):
-    """write --plan with invalid JSON should exit 1."""
-    plan_file = tmp_path / "bad.json"
-    plan_file.write_text("not valid json {{{")
-
-    mock_cfg = _mock_config()
-    with patch("slima_agents.cli.Config.load", return_value=mock_cfg):
-        result = runner.invoke(main, ["write", "--plan", str(plan_file), "test"])
-
-    assert result.exit_code == 1
-    assert "Plan file error:" in result.output
-
-
-# ---------- plan ----------
-
-
-def test_plan_config_error(runner):
-    """plan should exit 1 on ConfigError."""
-    with patch("slima_agents.cli.Config.load", side_effect=ConfigError("no token")):
-        result = runner.invoke(main, ["plan", "test prompt"])
-    assert result.exit_code == 1
-    assert "Config error:" in result.output
-
-
-# ---------- plan-loop ----------
-
-
-def test_plan_loop_config_error(runner):
-    """plan-loop should exit 1 on ConfigError."""
-    with patch("slima_agents.cli.Config.load", side_effect=ConfigError("no token")):
-        result = runner.invoke(main, ["plan-loop", "test prompt"])
-    assert result.exit_code == 1
-    assert "Config error:" in result.output
-
-
 # ---------- verbose flag ----------
 
 
@@ -247,9 +162,7 @@ def test_main_help(runner):
     assert "worldbuild" in result.output
     assert "mystery" in result.output
     assert "ask" in result.output
-    assert "write" in result.output
-    assert "plan" in result.output
-    assert "research" in result.output
+    assert "task" in result.output
     assert "status" in result.output
 
 
@@ -258,17 +171,83 @@ def test_ask_help(runner):
     result = runner.invoke(main, ["ask", "--help"])
     assert result.exit_code == 0
     assert "--book" in result.output
-    assert "--writable" in result.output
+    assert "--readonly" in result.output
     assert "--resume" in result.output
     assert "--system-prompt" in result.output
     assert "--json" in result.output
 
 
-def test_write_help(runner):
-    """write --help should show all options."""
-    result = runner.invoke(main, ["write", "--help"])
+# ---------- task ----------
+
+
+def test_task_help(runner):
+    """task --help should show all options."""
+    result = runner.invoke(main, ["task", "--help"])
     assert result.exit_code == 0
     assert "--book" in result.output
-    assert "--source-book" in result.output
-    assert "--plan" in result.output
+    assert "--tool-set" in result.output
+    assert "--system-prompt" in result.output
+    assert "--plan-first" in result.output
+    assert "--language-rule" in result.output
+    assert "--resume" in result.output
+    assert "--json" in result.output
     assert "--json-progress" in result.output
+    assert "--timeout" in result.output
+
+
+def test_task_in_main_help(runner):
+    """task should appear in main --help."""
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "task" in result.output
+
+
+def test_task_tool_set_choices(runner):
+    """task --tool-set should only accept valid choices."""
+    result = runner.invoke(main, ["task", "--tool-set", "invalid", "hello"])
+    assert result.exit_code != 0
+    assert "Invalid value" in result.output or "invalid" in result.output.lower()
+
+
+# ---------- task-pipeline ----------
+
+
+def test_task_pipeline_help(runner):
+    """task-pipeline --help should show --plan option."""
+    result = runner.invoke(main, ["task-pipeline", "--help"])
+    assert result.exit_code == 0
+    assert "--plan" in result.output
+    assert "--model" in result.output
+    assert "--json-progress" in result.output
+
+
+def test_task_pipeline_in_main_help(runner):
+    """task-pipeline should appear in main --help."""
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "task-pipeline" in result.output
+
+
+def test_task_pipeline_config_error(runner, tmp_path):
+    """task-pipeline should exit 1 on ConfigError."""
+    # Need a valid plan file to get past plan loading
+    plan_file = tmp_path / "plan.json"
+    plan_file.write_text('{"stages":[{"number":1,"name":"s","prompt":"p"}]}')
+
+    with patch("slima_agents.cli.Config.load", side_effect=ConfigError("no token")):
+        result = runner.invoke(main, ["task-pipeline", "--plan", str(plan_file)])
+    assert result.exit_code == 1
+    assert "Config error:" in result.output
+
+
+def test_task_pipeline_invalid_plan(runner, tmp_path):
+    """task-pipeline with invalid JSON should exit 1."""
+    plan_file = tmp_path / "bad.json"
+    plan_file.write_text("not json {{{")
+
+    mock_cfg = _mock_config()
+    with patch("slima_agents.cli.Config.load", return_value=mock_cfg):
+        result = runner.invoke(main, ["task-pipeline", "--plan", str(plan_file)])
+
+    assert result.exit_code == 1
+    assert "Plan file error:" in result.output

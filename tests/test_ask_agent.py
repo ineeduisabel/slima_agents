@@ -33,25 +33,9 @@ async def test_ask_agent_returns_result():
         MockRunner.run.assert_called_once()
 
 
-def test_ask_agent_readonly_tools():
-    """Default allowed_tools returns ASK_AGENT_TOOLS (MCP read + web, no Bash)."""
+def test_ask_agent_default_writable_tools():
+    """Default allowed_tools returns ASK_AGENT_WRITE_TOOLS (all MCP + web)."""
     agent = AskAgent(context=WorldContext(), prompt="test")
-    tools = agent.allowed_tools()
-    assert tools == ASK_AGENT_TOOLS
-    # Should include MCP read tools + web search
-    assert "mcp__slima__read_file" in tools
-    assert "mcp__slima__list_books" in tools
-    assert "WebSearch" in tools
-    assert "WebFetch" in tools
-    # Should NOT include Bash or local file ops
-    assert "Bash" not in tools
-    assert "Read" not in tools
-    assert "Edit" not in tools
-
-
-def test_ask_agent_writable_tools():
-    """writable=True should return ASK_AGENT_WRITE_TOOLS (all MCP + web)."""
-    agent = AskAgent(context=WorldContext(), prompt="test", writable=True)
     tools = agent.allowed_tools()
     assert tools == ASK_AGENT_WRITE_TOOLS
     # Should include write MCP tools + web search
@@ -60,7 +44,24 @@ def test_ask_agent_writable_tools():
     assert "mcp__slima__delete_file" in tools
     assert "mcp__slima__append_to_file" in tools
     assert "WebSearch" in tools
-    # Should NOT include Bash
+    assert "WebFetch" in tools
+    # Should NOT include Bash or local file ops
+    assert "Bash" not in tools
+    assert "Read" not in tools
+    assert "Edit" not in tools
+
+
+def test_ask_agent_readonly_tools():
+    """writable=False should return ASK_AGENT_TOOLS (read-only MCP + web)."""
+    agent = AskAgent(context=WorldContext(), prompt="test", writable=False)
+    tools = agent.allowed_tools()
+    assert tools == ASK_AGENT_TOOLS
+    # Should include MCP read tools + web search
+    assert "mcp__slima__read_file" in tools
+    assert "mcp__slima__list_books" in tools
+    assert "WebSearch" in tools
+    # Should NOT include write tools or Bash
+    assert "mcp__slima__create_file" not in tools
     assert "Bash" not in tools
 
 

@@ -380,51 +380,6 @@ class TestMysteryCallbackInjection:
         assert callable(mock_agent.on_event)
 
 
-class TestPipelineCallbackInjection:
-    """pipeline _run_writer_stage should set agent.on_event."""
-
-    @pytest.mark.asyncio
-    async def test_run_writer_stage_sets_on_event(self):
-        from slima_agents.pipeline.models import StageDefinition
-        from slima_agents.pipeline.orchestrator import GenericOrchestrator
-
-        emitter = ProgressEmitter(enabled=True, _stream=StringIO())
-        mock_slima = AsyncMock()
-        mock_slima.get_book_structure = AsyncMock(return_value=[])
-
-        orch = GenericOrchestrator(
-            slima_client=mock_slima,
-            emitter=emitter,
-            console=MagicMock(),
-        )
-        # Set up context
-        from slima_agents.pipeline.context import DynamicContext
-        orch.context = DynamicContext(allowed_sections=["concept"])
-
-        stage_def = StageDefinition(
-            number=3, name="test_stage", display_name="Test Stage",
-            instructions="write stuff", initial_message="go",
-            tool_set="write",
-        )
-
-        on_event_set = []
-
-        with patch("slima_agents.pipeline.orchestrator.WriterAgent") as MockWriter:
-            mock_instance = MagicMock()
-            mock_instance.name = "WriterAgent[test_stage]"
-            mock_instance.run = AsyncMock(return_value=_make_agent_result())
-
-            def capture_on_event(**kw):
-                return mock_instance
-
-            MockWriter.side_effect = capture_on_event
-
-            await orch._run_writer_stage(stage_def, "bk_test")
-
-        # on_event should have been set
-        assert mock_instance.on_event is not None
-
-
 # ===========================================================================
 # Phase 4: AskAgent changes
 # ===========================================================================
@@ -437,28 +392,28 @@ class TestAskAgentChanges:
 
     def test_readonly_returns_ask_agent_tools(self):
         from slima_agents.agents.ask import AskAgent
-        from slima_agents.agents.tools import ASK_AGENT_TOOLS
+        from slima_agents.agents.tools import ASK_AGENT_WRITE_TOOLS
         agent = AskAgent(context=WorldContext(), prompt="test")
-        assert agent.allowed_tools() == ASK_AGENT_TOOLS
+        assert agent.allowed_tools() == ASK_AGENT_WRITE_TOOLS
         assert "Bash" not in agent.allowed_tools()
 
-    def test_writable_returns_ask_agent_write_tools(self):
+    def test_readonly_returns_ask_agent_read_tools(self):
         from slima_agents.agents.ask import AskAgent
-        from slima_agents.agents.tools import ASK_AGENT_WRITE_TOOLS
-        agent = AskAgent(context=WorldContext(), prompt="test", writable=True)
-        assert agent.allowed_tools() == ASK_AGENT_WRITE_TOOLS
+        from slima_agents.agents.tools import ASK_AGENT_TOOLS
+        agent = AskAgent(context=WorldContext(), prompt="test", writable=False)
+        assert agent.allowed_tools() == ASK_AGENT_TOOLS
+
+    def test_has_write_tools_default(self):
+        """Default AskAgent (writable=True) should have write tools."""
+        from slima_agents.agents.ask import AskAgent
+        agent = AskAgent(context=WorldContext(), prompt="test")
+        assert agent._has_write_tools() is True
 
     def test_has_write_tools_readonly(self):
         """Read-only AskAgent should not have write tools."""
         from slima_agents.agents.ask import AskAgent
-        agent = AskAgent(context=WorldContext(), prompt="test")
+        agent = AskAgent(context=WorldContext(), prompt="test", writable=False)
         assert agent._has_write_tools() is False
-
-    def test_has_write_tools_writable(self):
-        """Writable AskAgent should have write tools."""
-        from slima_agents.agents.ask import AskAgent
-        agent = AskAgent(context=WorldContext(), prompt="test", writable=True)
-        assert agent._has_write_tools() is True
 
     def test_on_event_accepted(self):
         from slima_agents.agents.ask import AskAgent
@@ -477,12 +432,6 @@ class TestCliAskJsonProgress:
         result = runner.invoke(main, ["ask", "--help"])
         assert "--json-progress" in result.output
 
-    def test_plan_help_shows_json_progress(self):
-        from click.testing import CliRunner
-        from slima_agents.cli import main
-        runner = CliRunner()
-        result = runner.invoke(main, ["plan", "--help"])
-        assert "--json-progress" in result.output
 
 
 # ---------------------------------------------------------------------------
