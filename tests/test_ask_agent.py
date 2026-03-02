@@ -10,7 +10,7 @@ from slima_agents.agents.ask import AskAgent
 from slima_agents.agents.base import AgentResult
 from slima_agents.agents.claude_runner import RunOutput  # used by _run_output helper
 from slima_agents.agents.context import WorldContext
-from slima_agents.agents.tools import SLIMA_MCP_ALL_READ_TOOLS, SLIMA_MCP_TOOLS
+from slima_agents.agents.tools import ASK_AGENT_TOOLS, ASK_AGENT_WRITE_TOOLS
 
 
 def _run_output(text: str = "Done", num_turns: int = 1, cost_usd: float = 0.01) -> RunOutput:
@@ -34,18 +34,34 @@ async def test_ask_agent_returns_result():
 
 
 def test_ask_agent_readonly_tools():
-    """Default allowed_tools returns [] (no whitelist = all tools enabled)."""
+    """Default allowed_tools returns ASK_AGENT_TOOLS (MCP read + web, no Bash)."""
     agent = AskAgent(context=WorldContext(), prompt="test")
-    assert agent.allowed_tools() == []
+    tools = agent.allowed_tools()
+    assert tools == ASK_AGENT_TOOLS
+    # Should include MCP read tools + web search
+    assert "mcp__slima__read_file" in tools
+    assert "mcp__slima__list_books" in tools
+    assert "WebSearch" in tools
+    assert "WebFetch" in tools
+    # Should NOT include Bash or local file ops
+    assert "Bash" not in tools
+    assert "Read" not in tools
+    assert "Edit" not in tools
 
 
 def test_ask_agent_writable_tools():
-    """writable=True should return SLIMA_MCP_TOOLS (includes write tools)."""
+    """writable=True should return ASK_AGENT_WRITE_TOOLS (all MCP + web)."""
     agent = AskAgent(context=WorldContext(), prompt="test", writable=True)
-    assert agent.allowed_tools() == SLIMA_MCP_TOOLS
-    tool_names = agent.allowed_tools()
-    assert "mcp__slima__create_file" in tool_names
-    assert "mcp__slima__write_file" in tool_names
+    tools = agent.allowed_tools()
+    assert tools == ASK_AGENT_WRITE_TOOLS
+    # Should include write MCP tools + web search
+    assert "mcp__slima__create_file" in tools
+    assert "mcp__slima__write_file" in tools
+    assert "mcp__slima__delete_file" in tools
+    assert "mcp__slima__append_to_file" in tools
+    assert "WebSearch" in tools
+    # Should NOT include Bash
+    assert "Bash" not in tools
 
 
 def test_ask_agent_with_book_token():

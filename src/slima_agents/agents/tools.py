@@ -18,6 +18,10 @@ def _both(tool: str) -> list[str]:
     return [f"{prefix}{tool}" for prefix in _PREFIXES]
 
 
+# ---------------------------------------------------------------------------
+# Specialist agent tool sets (used by worldbuild / mystery / pipeline writers)
+# ---------------------------------------------------------------------------
+
 # Full write tools (for agents that create/write files)
 SLIMA_MCP_TOOLS: list[str] = [
     *_both("create_file"),
@@ -36,7 +40,7 @@ SLIMA_MCP_READ_TOOLS: list[str] = [
 ]
 
 # All read-only tools including library-level (list/get books) and book-level operations.
-# Superset of SLIMA_MCP_READ_TOOLS — used by AskAgent for general-purpose queries.
+# Superset of SLIMA_MCP_READ_TOOLS — used by GenericPlannerAgent (source_book).
 SLIMA_MCP_ALL_READ_TOOLS: list[str] = [
     *_both("list_books"),
     *_both("get_book"),
@@ -46,3 +50,45 @@ SLIMA_MCP_ALL_READ_TOOLS: list[str] = [
     *_both("read_file"),
     *_both("search_content"),
 ]
+
+# ---------------------------------------------------------------------------
+# Comprehensive MCP tool set (every Slima MCP operation)
+# ---------------------------------------------------------------------------
+
+SLIMA_MCP_ALL_TOOLS: list[str] = [
+    # Library-level
+    *_both("create_book"),
+    *_both("list_books"),
+    *_both("get_book"),
+    *_both("get_book_structure"),
+    *_both("get_writing_stats"),
+    *_both("get_chapter"),
+    # Beta reader
+    *_both("list_personas"),
+    *_both("analyze_chapter"),
+    # File read
+    *_both("read_file"),
+    *_both("search_content"),
+    # File write
+    *_both("write_file"),
+    *_both("edit_file"),
+    *_both("create_file"),
+    *_both("delete_file"),
+    *_both("append_to_file"),
+]
+
+# ---------------------------------------------------------------------------
+# Native Claude tools (non-MCP)
+# ---------------------------------------------------------------------------
+
+WEB_TOOLS: list[str] = ["WebSearch", "WebFetch"]
+
+# ---------------------------------------------------------------------------
+# AskAgent tool sets: MCP + web search, NO Bash / local file ops
+# ---------------------------------------------------------------------------
+
+ASK_AGENT_TOOLS: list[str] = [*SLIMA_MCP_ALL_READ_TOOLS, *WEB_TOOLS]
+"""AskAgent default (read-only): all read MCP + web search."""
+
+ASK_AGENT_WRITE_TOOLS: list[str] = [*SLIMA_MCP_ALL_TOOLS, *WEB_TOOLS]
+"""AskAgent writable: all MCP operations + web search."""

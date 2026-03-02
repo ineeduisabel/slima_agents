@@ -435,22 +435,30 @@ class TestAskAgentChanges:
         agent = AskAgent(context=WorldContext(), prompt="test")
         assert agent.timeout == 3600
 
-    def test_readonly_returns_empty_list(self):
+    def test_readonly_returns_ask_agent_tools(self):
         from slima_agents.agents.ask import AskAgent
+        from slima_agents.agents.tools import ASK_AGENT_TOOLS
         agent = AskAgent(context=WorldContext(), prompt="test")
-        assert agent.allowed_tools() == []
+        assert agent.allowed_tools() == ASK_AGENT_TOOLS
+        assert "Bash" not in agent.allowed_tools()
 
-    def test_writable_still_returns_mcp_tools(self):
+    def test_writable_returns_ask_agent_write_tools(self):
         from slima_agents.agents.ask import AskAgent
-        from slima_agents.agents.tools import SLIMA_MCP_TOOLS
+        from slima_agents.agents.tools import ASK_AGENT_WRITE_TOOLS
         agent = AskAgent(context=WorldContext(), prompt="test", writable=True)
-        assert agent.allowed_tools() == SLIMA_MCP_TOOLS
+        assert agent.allowed_tools() == ASK_AGENT_WRITE_TOOLS
 
-    def test_has_write_tools_false_for_empty_list(self):
-        """_has_write_tools should not crash on empty list."""
+    def test_has_write_tools_readonly(self):
+        """Read-only AskAgent should not have write tools."""
         from slima_agents.agents.ask import AskAgent
         agent = AskAgent(context=WorldContext(), prompt="test")
         assert agent._has_write_tools() is False
+
+    def test_has_write_tools_writable(self):
+        """Writable AskAgent should have write tools."""
+        from slima_agents.agents.ask import AskAgent
+        agent = AskAgent(context=WorldContext(), prompt="test", writable=True)
+        assert agent._has_write_tools() is True
 
     def test_on_event_accepted(self):
         from slima_agents.agents.ask import AskAgent

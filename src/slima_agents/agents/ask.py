@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .base import BaseAgent
-from .tools import SLIMA_MCP_ALL_READ_TOOLS, SLIMA_MCP_TOOLS
+from .tools import ASK_AGENT_TOOLS, ASK_AGENT_WRITE_TOOLS
 
 
 class AskAgent(BaseAgent):
@@ -48,7 +48,5 @@ class AskAgent(BaseAgent):
 
     def allowed_tools(self) -> list[str]:
         if self._writable:
-            return SLIMA_MCP_TOOLS
-        # Return empty list to skip --allowedTools, enabling web search
-        # and all native claude tools alongside Slima MCP read tools.
-        return []
+            return ASK_AGENT_WRITE_TOOLS
+        return ASK_AGENT_TOOLS
