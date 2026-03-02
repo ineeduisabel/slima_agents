@@ -123,7 +123,7 @@ class ProgressEmitter:
             data["stage"] = stage
         self._emit("text_delta", **data)
 
-    def ask_result(
+    def task_result(
         self,
         session_id: str,
         result: str,
@@ -132,7 +132,7 @@ class ProgressEmitter:
         duration_s: float = 0.0,
     ) -> None:
         self._emit(
-            "ask_result",
+            "task_result",
             session_id=session_id,
             result=result,
             num_turns=num_turns,

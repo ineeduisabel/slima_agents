@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..worldbuild.templates import LANGUAGE_RULE
+from ..templates import LANGUAGE_RULE
 from .base import BaseAgent
 from .tools import (
     SLIMA_MCP_ALL_READ_TOOLS,

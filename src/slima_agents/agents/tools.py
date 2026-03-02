@@ -83,12 +83,3 @@ SLIMA_MCP_ALL_TOOLS: list[str] = [
 
 WEB_TOOLS: list[str] = ["WebSearch", "WebFetch"]
 
-# ---------------------------------------------------------------------------
-# AskAgent tool sets: MCP + web search, NO Bash / local file ops
-# ---------------------------------------------------------------------------
-
-ASK_AGENT_TOOLS: list[str] = [*SLIMA_MCP_ALL_READ_TOOLS, *WEB_TOOLS]
-"""AskAgent default (read-only): all read MCP + web search."""
-
-ASK_AGENT_WRITE_TOOLS: list[str] = [*SLIMA_MCP_ALL_TOOLS, *WEB_TOOLS]
-"""AskAgent writable: all MCP operations + web search."""

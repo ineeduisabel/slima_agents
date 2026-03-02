@@ -19,7 +19,7 @@ from slima_agents.agents.tools import (
     SLIMA_MCP_TOOLS,
     WEB_TOOLS,
 )
-from slima_agents.worldbuild.templates import LANGUAGE_RULE
+from slima_agents.templates import LANGUAGE_RULE
 
 
 # ---------------------------------------------------------------------------
