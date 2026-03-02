@@ -80,10 +80,10 @@ class TestSystemPromptDefault:
         sp = agent.system_prompt()
         assert _DEFAULT_SYSTEM_PROMPT in sp
 
-    def test_no_language_rule_by_default(self):
+    def test_language_rule_always_included(self):
         agent = _make_agent()
         sp = agent.system_prompt()
-        assert "CRITICAL — Language Rule" not in sp
+        assert "CRITICAL — Language Rule" in sp
 
     def test_no_plan_first_by_default(self):
         agent = _make_agent()
@@ -107,11 +107,6 @@ class TestSystemPromptCustom:
         sp = agent.system_prompt()
         assert "You are a pirate." in sp
         assert _DEFAULT_SYSTEM_PROMPT not in sp
-
-    def test_include_language_rule(self):
-        agent = _make_agent(include_language_rule=True)
-        sp = agent.system_prompt()
-        assert "CRITICAL — Language Rule" in sp
 
     def test_plan_first(self):
         agent = _make_agent(plan_first=True)
@@ -140,7 +135,6 @@ class TestSystemPromptCombinations:
         ctx.overview = "Some overview."
         agent = _make_agent(
             system_prompt_text="Custom instructions here.",
-            include_language_rule=True,
             plan_first=True,
             book_token="bk_combo",
             context=ctx,
@@ -153,12 +147,6 @@ class TestSystemPromptCombinations:
         book_pos = sp.index("# Target Book")
         ctx_pos = sp.index("# Current Context")
         assert lr_pos < custom_pos < plan_pos < book_pos < ctx_pos
-
-    def test_language_rule_with_default_prompt(self):
-        agent = _make_agent(include_language_rule=True)
-        sp = agent.system_prompt()
-        assert "CRITICAL — Language Rule" in sp
-        assert _DEFAULT_SYSTEM_PROMPT in sp
 
     def test_plan_first_with_book_no_context(self):
         agent = _make_agent(plan_first=True, book_token="bk_abc")

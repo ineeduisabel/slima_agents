@@ -231,7 +231,6 @@ def ask(
 )
 @click.option("--system-prompt", default=None, help="自訂 system prompt。")
 @click.option("--plan-first", is_flag=True, default=False, help="啟用規劃模式。")
-@click.option("--language-rule", is_flag=True, default=False, help="加入 LANGUAGE_RULE。")
 @click.option("--resume", "-r", default=None, help="Resume 之前的 session ID。")
 @click.option("--json", "json_output", is_flag=True, default=False, help="輸出 JSON（含 session_id）。")
 @click.option("--json-progress", "json_progress", is_flag=True, default=False, help="輸出 NDJSON 串流事件到 stdout。")
@@ -243,7 +242,6 @@ def task(
     tool_set: str,
     system_prompt: str | None,
     plan_first: bool,
-    language_rule: bool,
     resume: str | None,
     json_output: bool,
     json_progress: bool,
@@ -255,7 +253,7 @@ def task(
     使用範例：
       slima-agents task "列出我所有的書"
       slima-agents task --book bk_abc123 --tool-set write "建立角色檔案"
-      slima-agents task --plan-first --language-rule "寫一個短篇故事"
+      slima-agents task --plan-first "寫一個短篇故事"
       slima-agents task --system-prompt "你是一個海盜" "說你好"
       slima-agents task --json "你好"
       slima-agents task --resume sess_abc123 "繼續上次的話題"
@@ -282,7 +280,6 @@ def task(
             system_prompt_text=system_prompt or "",
             tool_set=tool_set,
             plan_first=plan_first,
-            include_language_rule=language_rule,
             resume_session=resume or "",
             on_event=on_event,
         )

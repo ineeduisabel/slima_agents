@@ -188,7 +188,7 @@ def test_task_help(runner):
     assert "--tool-set" in result.output
     assert "--system-prompt" in result.output
     assert "--plan-first" in result.output
-    assert "--language-rule" in result.output
+    assert "--plan-first" in result.output
     assert "--resume" in result.output
     assert "--json" in result.output
     assert "--json-progress" in result.output

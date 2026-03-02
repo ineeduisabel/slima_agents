@@ -49,7 +49,6 @@ class TaskAgent(BaseAgent):
         system_prompt_text: str = "",
         tool_set: str = "read",
         plan_first: bool = False,
-        include_language_rule: bool = False,
         **kwargs,
     ):
         kwargs.setdefault("timeout", 3600)
@@ -58,7 +57,6 @@ class TaskAgent(BaseAgent):
         self._system_prompt_text = system_prompt_text
         self._tool_set = tool_set
         self._plan_first = plan_first
-        self._include_language_rule = include_language_rule
 
     @property
     def name(self) -> str:
@@ -67,9 +65,8 @@ class TaskAgent(BaseAgent):
     def system_prompt(self) -> str:
         parts: list[str] = []
 
-        # 1. Language rule (optional)
-        if self._include_language_rule:
-            parts.append(LANGUAGE_RULE)
+        # 1. Language rule (always on)
+        parts.append(LANGUAGE_RULE)
 
         # 2. Custom or default instructions
         parts.append(self._system_prompt_text or _DEFAULT_SYSTEM_PROMPT)

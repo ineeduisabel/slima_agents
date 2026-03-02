@@ -318,7 +318,6 @@ class TaskOrchestrator:
             system_prompt_text=stage_def.system_prompt,
             tool_set=stage_def.tool_set,
             plan_first=stage_def.plan_first,
-            include_language_rule=stage_def.include_language_rule,
             resume_session=resume_session,
         )
 

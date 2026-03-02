@@ -19,7 +19,6 @@ class TaskStageDefinition(BaseModel):
     system_prompt: str = ""  # → TaskAgent._system_prompt_text
     tool_set: str = "read"  # → TaskAgent._tool_set
     plan_first: bool = False  # → TaskAgent._plan_first
-    include_language_rule: bool = False  # → TaskAgent._include_language_rule
     context_section: str = ""  # write result into this context section
     chain_to_previous: bool = False  # use previous stage's session_id (--resume)
     timeout: int = 3600

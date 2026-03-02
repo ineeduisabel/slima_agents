@@ -22,7 +22,6 @@ class TestTaskStageDefinition:
         assert s.system_prompt == ""
         assert s.tool_set == "read"
         assert s.plan_first is False
-        assert s.include_language_rule is False
         assert s.context_section == ""
         assert s.chain_to_previous is False
         assert s.timeout == 3600
@@ -44,13 +43,11 @@ class TestTaskStageDefinition:
             system_prompt="You are a novelist",
             tool_set="write",
             plan_first=True,
-            include_language_rule=True,
             context_section="chapters",
             timeout=7200,
         )
         assert s.tool_set == "write"
         assert s.plan_first is True
-        assert s.include_language_rule is True
         assert s.context_section == "chapters"
         assert s.timeout == 7200
 
