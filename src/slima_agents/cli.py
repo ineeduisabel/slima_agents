@@ -325,21 +325,14 @@ def task(
 
 
 @main.command("task-pipeline")
-@click.option("--plan", "plan_file", required=True, type=click.Path(exists=True), help="TaskPlan JSON 檔案（必填）。")
 @click.option("--model", "-m", default=None, help="指定 Claude 模型（如 claude-opus-4-6）。")
 @click.option("--json-progress", is_flag=True, default=False, help="輸出 NDJSON 進度事件到 stdout。")
-def task_pipeline(plan_file: str, model: str | None, json_progress: bool):
+def task_pipeline(model: str | None, json_progress: bool):
     """Front-end configurable multi-stage TaskAgent pipeline.
 
     \b
-    Reads a TaskPlan JSON file and executes stages sequentially / in parallel.
+    Reads a TaskPlan JSON from stdin.
     Stages with the same number run concurrently (asyncio.gather).
-
-    \b
-    使用範例：
-      slima-agents task-pipeline --plan stages.json
-      slima-agents task-pipeline --plan stages.json --model claude-opus-4-6
-      slima-agents task-pipeline --plan stages.json --json-progress
     """
     if json_progress:
         cli_console = Console(file=sys.stderr, no_color=True)
@@ -354,17 +347,21 @@ def task_pipeline(plan_file: str, model: str | None, json_progress: bool):
         cli_console.print(f"[red]Config error:[/red] {e}")
         raise SystemExit(1)
 
-    # Load TaskPlan
+    # Load TaskPlan from stdin
     import json as json_mod
     from .agents.task_models import TaskPlan
 
     try:
-        with open(plan_file, encoding="utf-8") as f:
-            data = json_mod.load(f)
+        raw = sys.stdin.read()
+        if not raw.strip():
+            cli_console.print("[red]Error:[/red] No JSON provided via stdin.")
+            raise SystemExit(1)
+        data = json_mod.loads(raw)
         task_plan = TaskPlan.model_validate(data)
-        cli_console.print(f"  [green]Loaded task plan from:[/green] {plan_file}")
+    except SystemExit:
+        raise
     except Exception as e:
-        cli_console.print(f"[red]Plan file error:[/red] {e}")
+        cli_console.print(f"[red]Plan error:[/red] {e}")
         raise SystemExit(1)
 
     async def _run():

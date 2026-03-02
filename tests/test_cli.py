@@ -213,10 +213,9 @@ def test_task_tool_set_choices(runner):
 
 
 def test_task_pipeline_help(runner):
-    """task-pipeline --help should show --plan option."""
+    """task-pipeline --help should show options."""
     result = runner.invoke(main, ["task-pipeline", "--help"])
     assert result.exit_code == 0
-    assert "--plan" in result.output
     assert "--model" in result.output
     assert "--json-progress" in result.output
 
@@ -228,26 +227,43 @@ def test_task_pipeline_in_main_help(runner):
     assert "task-pipeline" in result.output
 
 
-def test_task_pipeline_config_error(runner, tmp_path):
+def test_task_pipeline_config_error(runner):
     """task-pipeline should exit 1 on ConfigError."""
-    # Need a valid plan file to get past plan loading
-    plan_file = tmp_path / "plan.json"
-    plan_file.write_text('{"stages":[{"number":1,"name":"s","prompt":"p"}]}')
+    plan_json = '{"stages":[{"number":1,"name":"s","prompt":"p"}]}'
 
     with patch("slima_agents.cli.Config.load", side_effect=ConfigError("no token")):
-        result = runner.invoke(main, ["task-pipeline", "--plan", str(plan_file)])
+        result = runner.invoke(main, ["task-pipeline"], input=plan_json)
     assert result.exit_code == 1
     assert "Config error:" in result.output
 
 
-def test_task_pipeline_invalid_plan(runner, tmp_path):
-    """task-pipeline with invalid JSON should exit 1."""
-    plan_file = tmp_path / "bad.json"
-    plan_file.write_text("not json {{{")
+def test_task_pipeline_invalid_json(runner):
+    """task-pipeline with invalid JSON from stdin should exit 1."""
+    mock_cfg = _mock_config()
+    with patch("slima_agents.cli.Config.load", return_value=mock_cfg):
+        result = runner.invoke(main, ["task-pipeline"], input="not json {{{")
+
+    assert result.exit_code == 1
+    assert "Plan error:" in result.output
+
+
+def test_task_pipeline_stdin_empty(runner):
+    """task-pipeline with empty stdin should exit 1."""
+    mock_cfg = _mock_config()
+    with patch("slima_agents.cli.Config.load", return_value=mock_cfg):
+        result = runner.invoke(main, ["task-pipeline"], input="")
+
+    assert result.exit_code == 1
+    assert "No JSON provided" in result.output
+
+
+def test_task_pipeline_valid_stdin(runner):
+    """task-pipeline should parse valid JSON from stdin."""
+    plan_json = '{"stages":[{"number":1,"name":"s","prompt":"p"}]}'
 
     mock_cfg = _mock_config()
     with patch("slima_agents.cli.Config.load", return_value=mock_cfg):
-        result = runner.invoke(main, ["task-pipeline", "--plan", str(plan_file)])
+        result = runner.invoke(main, ["task-pipeline"], input=plan_json)
 
-    assert result.exit_code == 1
-    assert "Plan file error:" in result.output
+    # Should get past plan parsing (may fail at orchestrator, not at parse)
+    assert "Plan error:" not in result.output
