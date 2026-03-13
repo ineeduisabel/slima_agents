@@ -185,6 +185,19 @@ class TestTaskPlan:
         ])
         assert plan.context_sections[0] == "_pipeline_info"
 
+    def test_creates_book_default_false(self):
+        s = TaskStageDefinition(number=1, name="s", prompt="p")
+        assert s.creates_book is False
+
+    def test_creates_book_field(self):
+        s = TaskStageDefinition(number=1, name="s", prompt="p", creates_book=True)
+        assert s.creates_book is True
+
+    def test_creates_book_in_json(self):
+        raw = {"number": 1, "name": "s", "prompt": "p", "creates_book": True}
+        s = TaskStageDefinition.model_validate(raw)
+        assert s.creates_book is True
+
     def test_chain_to_previous_field(self):
         s = TaskStageDefinition(number=2, name="s", prompt="p", chain_to_previous=True)
         assert s.chain_to_previous is True

@@ -134,6 +134,7 @@ uv run slima-agents task-pipeline --json-progress < stages.json
 - `plan_first` — 先規劃再執行（選填）
 - `context_section` — 將結果存入此 context section，供後續 stage 使用（選填）
 - `chain_to_previous` — 使用前一 stage 的 session ID（選填）
+- `creates_book` — 此 stage 負責建立書籍（選填，需 `tool_set="all"`）
 - `timeout` — 超時秒數（預設 3600）
 
 ### `status` — 檢查連線

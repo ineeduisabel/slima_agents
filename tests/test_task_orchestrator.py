@@ -125,6 +125,36 @@ class TestBookSetup:
         mock_slima.create_book.assert_not_awaited()
         assert book_token == ""
 
+    @pytest.mark.asyncio
+    async def test_defers_when_creates_book_stage_exists(self, mock_slima, emitter):
+        """Should NOT create book upfront when a creates_book stage exists."""
+        plan = TaskPlan(
+            title="My Book",
+            stages=[
+                TaskStageDefinition(number=1, name="brainstorm", prompt="think",
+                                    tool_set="all", creates_book=True),
+                TaskStageDefinition(number=2, name="write", prompt="write",
+                                    tool_set="write"),
+            ],
+        )
+
+        with patch("slima_agents.agents.task_orchestrator.TaskAgent") as MockAgent:
+            instance = AsyncMock()
+            instance.run = AsyncMock(return_value=_result(
+                output="I created the book: bk_new123 with title My Book",
+                session_id="sess_1",
+            ))
+            instance.name = "TaskAgent"
+            MockAgent.return_value = instance
+
+            orch = TaskOrchestrator(mock_slima, model="test", emitter=emitter)
+            book_token = await orch.run(plan)
+
+        # Orchestrator should NOT have called create_book itself
+        mock_slima.create_book.assert_not_awaited()
+        # Should have captured the token from agent output
+        assert book_token == "bk_new123"
+
 
 # ---------------------------------------------------------------------------
 # Sequential execution
@@ -845,3 +875,163 @@ class TestSessionChaining:
         assert created_agents[0].get("resume_session", "") == ""
         assert created_agents[1].get("resume_session") == "sess_1"
         assert created_agents[2].get("resume_session") == "sess_2"
+
+
+# ---------------------------------------------------------------------------
+# Deferred book creation (creates_book)
+# ---------------------------------------------------------------------------
+
+
+class TestCreatesBook:
+    @pytest.mark.asyncio
+    async def test_captures_book_token_from_output(self, mock_slima, emitter):
+        """creates_book stage should extract bk_ token from agent output."""
+        plan = TaskPlan(
+            stages=[
+                TaskStageDefinition(
+                    number=1, name="brainstorm", prompt="brainstorm and create book",
+                    tool_set="all", creates_book=True, context_section="brainstorm",
+                ),
+                TaskStageDefinition(
+                    number=2, name="write", prompt="write chapter 1",
+                    tool_set="write",
+                ),
+            ],
+        )
+
+        call_count = 0
+        created_agents = []
+
+        with patch("slima_agents.agents.task_orchestrator.TaskAgent") as MockAgent:
+            def _make(**kwargs):
+                nonlocal call_count
+                call_count += 1
+                inst = AsyncMock()
+                if call_count == 1:
+                    # Stage 1: agent creates a book via MCP
+                    inst.run = AsyncMock(return_value=_result(
+                        output="I've created the book 'Fantasy World' (bk_fantasy01). Let me outline the setting...",
+                        session_id="sess_1",
+                    ))
+                else:
+                    inst.run = AsyncMock(return_value=_result(
+                        output="Chapter 1 written.",
+                        session_id="sess_2",
+                    ))
+                inst.name = "TaskAgent"
+                created_agents.append(kwargs)
+                return inst
+
+            MockAgent.side_effect = _make
+
+            orch = TaskOrchestrator(mock_slima, model="test", emitter=emitter)
+            book_token = await orch.run(plan)
+
+        assert book_token == "bk_fantasy01"
+        # Stage 2 should have received the captured book_token
+        assert created_agents[1]["book_token"] == "bk_fantasy01"
+        # Orchestrator should NOT have created a book itself
+        mock_slima.create_book.assert_not_awaited()
+        # Plan JSON should have been saved
+        mock_slima.create_file.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_token_in_output(self, mock_slima, emitter):
+        """If creates_book stage doesn't produce a token, book_token stays empty."""
+        plan = TaskPlan(
+            stages=[
+                TaskStageDefinition(
+                    number=1, name="brainstorm", prompt="think about ideas",
+                    tool_set="none", creates_book=True,
+                ),
+                TaskStageDefinition(
+                    number=2, name="write", prompt="write",
+                    tool_set="write",
+                ),
+            ],
+        )
+
+        with patch("slima_agents.agents.task_orchestrator.TaskAgent") as MockAgent:
+            instance = AsyncMock()
+            instance.run = AsyncMock(return_value=_result(
+                output="Here are some ideas for a fantasy novel...",
+            ))
+            instance.name = "TaskAgent"
+            MockAgent.return_value = instance
+
+            orch = TaskOrchestrator(mock_slima, model="test", emitter=emitter)
+            book_token = await orch.run(plan)
+
+        assert book_token == ""
+
+    @pytest.mark.asyncio
+    async def test_skipped_when_book_token_exists(self, mock_slima, emitter):
+        """creates_book should be ignored when plan already has book_token."""
+        plan = TaskPlan(
+            book_token="bk_existing",
+            stages=[
+                TaskStageDefinition(
+                    number=1, name="brainstorm", prompt="brainstorm",
+                    tool_set="all", creates_book=True,
+                ),
+            ],
+        )
+
+        with patch("slima_agents.agents.task_orchestrator.TaskAgent") as MockAgent:
+            instance = AsyncMock()
+            instance.run = AsyncMock(return_value=_result(
+                output="Created bk_shouldignore",
+            ))
+            instance.name = "TaskAgent"
+            MockAgent.return_value = instance
+
+            orch = TaskOrchestrator(mock_slima, model="test", emitter=emitter)
+            book_token = await orch.run(plan)
+
+        # Should use the existing book, not the one from output
+        assert book_token == "bk_existing"
+
+    @pytest.mark.asyncio
+    async def test_tracker_initialized_after_book_created(self, mock_slima, emitter):
+        """PipelineTracker should be created after creates_book captures a token."""
+        plan = TaskPlan(
+            stages=[
+                TaskStageDefinition(
+                    number=1, name="brainstorm", prompt="create a book",
+                    tool_set="all", creates_book=True,
+                ),
+                TaskStageDefinition(
+                    number=2, name="write", prompt="write",
+                    tool_set="write",
+                ),
+            ],
+        )
+
+        with patch("slima_agents.agents.task_orchestrator.TaskAgent") as MockAgent:
+            instance = AsyncMock()
+            instance.run = AsyncMock(return_value=_result(
+                output="Book created: bk_tracker01",
+            ))
+            instance.name = "TaskAgent"
+            MockAgent.return_value = instance
+
+            with patch("slima_agents.agents.task_orchestrator.PipelineTracker") as MockTracker:
+                tracker_instance = AsyncMock()
+                MockTracker.return_value = tracker_instance
+
+                orch = TaskOrchestrator(mock_slima, model="test", emitter=emitter)
+                await orch.run(plan)
+
+            # Tracker should have been created (after book was captured)
+            MockTracker.assert_called_once()
+            tracker_instance.start.assert_awaited_once()
+            tracker_instance.complete.assert_awaited_once()
+
+    def test_extract_book_token_regex(self):
+        """Unit test for _extract_book_token."""
+        orch = TaskOrchestrator.__new__(TaskOrchestrator)
+        assert orch._extract_book_token("Created bk_abc123 successfully") == "bk_abc123"
+        assert orch._extract_book_token("bk_fantasy01 is ready") == "bk_fantasy01"
+        assert orch._extract_book_token("No token here") == ""
+        assert orch._extract_book_token("Token bk_ab too short") == ""  # < 6 chars after bk_
+        assert orch._extract_book_token("Multiple bk_first1 and bk_second") == "bk_first1"

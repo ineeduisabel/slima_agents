@@ -183,23 +183,36 @@ def plan_build(prompt: str, model: str | None, json_progress: bool, timeout: int
         return await agent.run()
 
     try:
-        result = asyncio.run(_run())
-
-        # Extract and validate JSON
         from .agents.plan_builder import extract_json_object
         from .agents.task_models import TaskPlan
 
-        try:
-            raw_dict = extract_json_object(result.full_output)
-        except ValueError as e:
-            console.print(f"[red]JSON extraction error:[/red] {e}")
-            raise SystemExit(1)
+        max_attempts = 2
+        task_plan = None
+        last_error = None
 
-        try:
-            task_plan = TaskPlan.model_validate(raw_dict)
-        except Exception as e:
-            console.print(f"[red]Validation error:[/red] {e}")
-            raise SystemExit(1)
+        for attempt in range(1, max_attempts + 1):
+            result = asyncio.run(_run())
+
+            try:
+                raw_dict = extract_json_object(result.full_output)
+            except ValueError as e:
+                last_error = f"JSON extraction error: {e}"
+                if attempt < max_attempts:
+                    console.print(f"[yellow]Attempt {attempt} failed ({last_error}), retrying…[/yellow]")
+                    continue
+                console.print(f"[red]{last_error}[/red]")
+                raise SystemExit(1)
+
+            try:
+                task_plan = TaskPlan.model_validate(raw_dict)
+                break
+            except Exception as e:
+                last_error = f"Validation error: {e}"
+                if attempt < max_attempts:
+                    console.print(f"[yellow]Attempt {attempt} failed ({last_error}), retrying…[/yellow]")
+                    continue
+                console.print(f"[red]{last_error}[/red]")
+                raise SystemExit(1)
 
         validated_json = task_plan.model_dump_json(indent=2)
 

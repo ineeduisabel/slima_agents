@@ -117,6 +117,11 @@ Start from 1 and increment.
 and made available to subsequent stages. Use this to pass information between stages.
 - **chain_to_previous** (bool): If true, resumes the previous stage's Claude session. \
 Rarely needed — prefer context_section for data flow.
+- **creates_book** (bool): If true, this stage is responsible for creating the book via MCP \
+``create_book`` tool. The orchestrator will extract the book_token from the agent's output \
+and use it for all subsequent stages. Use this when the book title is not known upfront \
+(e.g. a brainstorming stage that decides the title). Requires tool_set="all". \
+Only one stage should set this to true.
 - **timeout** (int): Timeout in seconds. Default 3600. Use shorter for simple tasks.
 
 # Design Principles
@@ -128,6 +133,16 @@ set context_section on stage A and reference it in stage B's prompt.
 3. **Parallel when independent**: Stages that don't depend on each other should share the same number.
 4. **Specific prompts**: Each stage prompt should be detailed enough for an AI to execute without ambiguity.
 5. **Appropriate tool_set**: "read" for research, "write" for file creation/editing, "none" for pure reasoning.
+6. **Deferred book creation**: When the book title is not known upfront (e.g. brainstorming), \
+set creates_book=true on the stage that decides the title. That stage MUST use tool_set="all" \
+so it has access to create_book. Leave top-level title and book_token empty. \
+Do NOT set creates_book when the user already provides a title or book_token.
+
+# CRITICAL Requirements
+
+- The top-level object MUST contain a "stages" array (NOT "steps", NOT "pipeline", NOT "tasks").
+- Each element in "stages" MUST have at minimum: number, name, prompt, tool_set.
+- The key name is exactly "stages" — any other name will cause a validation error.
 
 # Modifying an Existing Plan
 

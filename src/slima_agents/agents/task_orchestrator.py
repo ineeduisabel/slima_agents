@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 
 from rich.console import Console
@@ -78,6 +79,17 @@ class TaskOrchestrator:
                 if len(group) == 1:
                     result = await self._run_single_stage(group[0], book_token, last_session_id)
                     last_session_id = result.session_id or last_session_id
+
+                    # Capture book_token from creates_book stage
+                    if group[0].creates_book and not book_token:
+                        captured = self._extract_book_token(result.full_output)
+                        if captured:
+                            book_token = captured
+                            await self._on_book_created(book_token, plan)
+                            # Init tracker now that we have a book
+                            if not tracker:
+                                tracker = self._create_tracker(plan, book_token)
+                                await tracker.start()
                 else:
                     results = await self._run_parallel_stages(group, book_token)
                     # After parallel group, pick last non-empty session_id
@@ -111,13 +123,51 @@ class TaskOrchestrator:
             )
             raise
 
+    # --- Book token extraction ---
+
+    _BOOK_TOKEN_RE = re.compile(r"bk_[a-zA-Z0-9]{6,}")
+
+    def _extract_book_token(self, text: str) -> str:
+        """Extract a ``bk_...`` token from agent output text."""
+        m = self._BOOK_TOKEN_RE.search(text)
+        return m.group(0) if m else ""
+
+    async def _on_book_created(self, book_token: str, plan: TaskPlan) -> None:
+        """Post-processing after a creates_book stage produces a book_token."""
+        self.emitter.book_created(book_token, plan.title, "")
+        self.console.print(f"  Book captured: [cyan]{book_token}[/cyan]")
+
+        # Save plan JSON for resume
+        try:
+            await self.slima.create_file(
+                book_token,
+                path="agent-log/task-plan.json",
+                content=plan.model_dump_json(indent=2),
+                commit_message="Save task plan",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save task plan: {e}")
+
+        # Update pipeline info with real book_token
+        await self._inject_pipeline_info(plan, book_token)
+
     # --- Internal ---
 
     async def _setup_book(self, plan: TaskPlan, book_token: str) -> str:
-        """Create a book if title is set and no existing token."""
+        """Create a book if title is set and no existing token.
+
+        If any stage has ``creates_book=True``, defer book creation to that
+        stage (the agent will call MCP ``create_book`` itself).
+        """
         if book_token:
             self.console.print(f"  Using existing book: [cyan]{book_token}[/cyan]")
             return book_token
+
+        # Defer book creation when a stage declares creates_book
+        has_creates_book_stage = any(s.creates_book for s in plan.stages)
+        if has_creates_book_stage:
+            self.console.print("  [yellow]Book creation deferred to creates_book stage[/yellow]")
+            return ""
 
         if plan.title:
             book = await self.slima.create_book(title=plan.title)

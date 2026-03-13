@@ -21,6 +21,7 @@ class TaskStageDefinition(BaseModel):
     plan_first: bool = False  # → TaskAgent._plan_first
     context_section: str = ""  # write result into this context section
     chain_to_previous: bool = False  # use previous stage's session_id (--resume)
+    creates_book: bool = False  # agent creates book via MCP; orchestrator captures token
     timeout: int = 3600
 
     @property
